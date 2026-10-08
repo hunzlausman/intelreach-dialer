@@ -104,9 +104,25 @@ for f in pjsip extensions; do
   fi
 done
 chown -R asterisk:asterisk "$AST"
-sed -i '/^noload\s*=>\s*func_curl.so/d' "$AST/modules.conf"
-asterisk -rx "module load func_curl.so" >/dev/null 2>&1 || true
-asterisk -rx "module show like func_curl" | grep -q func_curl || die "func_curl is missing (apt install asterisk-modules) – the CRM dialplan needs CURL()"
+# CURL() = func_curl.so, which needs res_curl.so loaded first
+sed -i -E '/^noload\s*=>\s*(func_curl|res_curl)\.so/d' "$AST/modules.conf"
+MODDIR=$(asterisk -rx "core show settings" | awk -F': *' '/Module directory/ {print $2}' | tr -d '[:space:]')
+MODDIR=${MODDIR:-/usr/lib/asterisk/modules}
+if [ ! -f "$MODDIR/func_curl.so" ] && command -v apt-get >/dev/null && dpkg -s asterisk >/dev/null 2>&1; then
+  apt-get install -y -qq asterisk-modules >/dev/null || true       # Debian/Ubuntu packaged Asterisk
+fi
+asterisk -rx "module load res_curl.so" >/dev/null 2>&1 || true
+CURL_LOAD=$(asterisk -rx "module load func_curl.so" 2>&1 || true)
+if ! asterisk -rx "module show like func_curl" | grep -q func_curl; then
+  echo "  module directory: $MODDIR"
+  ls -l "$MODDIR"/func_curl.so "$MODDIR"/res_curl.so 2>&1 | sed 's/^/  /'
+  echo "  asterisk says: $CURL_LOAD"
+  echo "  details: grep -i curl /var/log/asterisk/messages* | tail"
+  die "func_curl is not loaded – the CRM dialplan needs CURL(). Packaged Asterisk: apt install asterisk-modules. \
+Built from source: apt install libcurl4-openssl-dev, then in the source folder ./configure && make menuselect \
+(enable func_curl + res_curl) && make && make install, and run this script again."
+fi
+ok "func_curl loaded"
 asterisk -rx "module reload res_pjsip.so" >/dev/null
 asterisk -rx "dialplan reload" >/dev/null
 if asterisk -rx "pjsip show transports" | grep -q transport-udp-crm; then

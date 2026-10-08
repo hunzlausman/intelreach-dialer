@@ -164,18 +164,26 @@ bash "$APP/scripts/apply_trunks.sh" && ok "SIP trunks applied ($(grep -c '^\[crm
 step "8/8 nginx + certificate for $CRM_DOMAIN"
 SITE=/etc/nginx/sites-available/intelreach-crm.conf
 CERT=/etc/letsencrypt/live/$CRM_DOMAIN/fullchain.pem
-sed -e "s|@CRM_DOMAIN@|$CRM_DOMAIN|g" -e "s|@CRM_PORT@|$CRM_PORT|g" "$REPO/deploy/nginx-crm.conf" > "$SITE"
+# port 443: an nginx stream SNI router forwarding to 127.0.0.1:8443, or nginx's normal https sites?
+if grep -rqsE '(proxy_pass|server)[[:space:]]+127\.0\.0\.1:8443' /etc/nginx --exclude=intelreach-crm.conf; then
+  SSL_LISTEN="127.0.0.1:8443 ssl http2"
+else
+  SSL_LISTEN="443 ssl http2"
+fi
+site() { sed -e "s|@CRM_DOMAIN@|$CRM_DOMAIN|g" -e "s|@CRM_PORT@|$CRM_PORT|g" -e "s|@SSL_LISTEN@|$SSL_LISTEN|g"   "$REPO/deploy/nginx-crm.conf" > "$SITE"; }
+site
 if [ ! -f "$CERT" ]; then
   sed -i '/#SSL_START/,/#SSL_END/d' "$SITE"          # port 80 only until the certificate exists
   ln -sf "$SITE" /etc/nginx/sites-enabled/
   nginx -t -q && systemctl reload nginx
   certbot certonly --webroot -w /var/www/html -d "$CRM_DOMAIN" --agree-tos --register-unsafely-without-email --non-interactive \
     || die "certbot failed – does $CRM_DOMAIN point to $PUBLIC_IP yet? (README step 1)"
-  sed -e "s|@CRM_DOMAIN@|$CRM_DOMAIN|g" -e "s|@CRM_PORT@|$CRM_PORT|g" "$REPO/deploy/nginx-crm.conf" > "$SITE"
+  site
 fi
 ln -sf "$SITE" /etc/nginx/sites-enabled/
-nginx -t -q && systemctl reload nginx
-ok "https://$CRM_DOMAIN"
+nginx -t -q || die "nginx config test failed: nginx -t"
+systemctl reload nginx
+ok "https://$CRM_DOMAIN (nginx listens on $SSL_LISTEN)"
 
 echo
 echo "Done. Next:"

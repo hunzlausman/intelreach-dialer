@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx2>=2.0                # the maintained httpx fork the anthropic SDK uses (github.com/pydantic/httpx2)
+python-multipart>=0.0.9
+websockets>=12
+anthropic>=1.0
+cryptography>=42
+phonenumbers>=8.13
+tzdata>=2024.1

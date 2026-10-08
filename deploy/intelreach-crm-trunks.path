@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply IntelReach CRM SIP trunks when Admin → SIP trunks changes them
+
+[Path]
+PathChanged=/etc/intelreach-crm/asterisk/pjsip_trunks.conf
+Unit=intelreach-crm-trunks.service
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Apply IntelReach CRM SIP trunks (PJSIP reload + firewall)
+After=asterisk.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/intelreach-crm/scripts/apply_trunks.sh

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+venv/
+.venv/
+*.db-wal
+*.db-shm
+.env
+*.env
+!deploy/crm.env.example

@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from . import config, db, launcher, net, outcomes, phone, vault
-from .ai import analysis, assemblyai, elevenlabs, llm
+from .ai import analysis, assemblyai, deepgram, elevenlabs, llm, stt
 from .security import current_user, require_admin
 from .voice import carriers
 
@@ -18,6 +18,7 @@ AGENT_KEYS = {
     # custom pipeline
     "prompt", "first_message", "llm_provider", "llm_model", "tts_provider", "voice_id", "tts_model", "language",
     "language_name", "carrier", "from_number", "transfer_to", "fields", "max_minutes", "silence_seconds", "record",
+    "stt_provider",
     # ElevenLabs agent
     "el_agent_id", "el_phone_number_id", "el_phone_type",
     # Telnyx AI Assistant
@@ -40,6 +41,8 @@ def clean_agent(kind, cfg):
     if kind == "custom":
         if cfg.get("llm_provider", "anthropic") not in llm.DEFAULT_MODELS:
             raise HTTPException(400, "Unknown LLM provider")
+        if cfg.get("stt_provider") and cfg["stt_provider"] not in stt.PROVIDERS:
+            raise HTTPException(400, "Speech-to-text must be assemblyai or deepgram")
         if cfg.get("carrier", "telnyx") not in ("telnyx", "twilio"):
             raise HTTPException(400, "Carrier must be telnyx or twilio")
         if not cfg.get("prompt"):
@@ -149,6 +152,10 @@ async def test_integration(provider: str, body: dict = None, user=Depends(requir
         if provider == "assemblyai":
             await assemblyai.browser_token(60)
             return {"ok": True, "message": "Key works (streaming token issued)"}
+        if provider == "deepgram":
+            projects = await deepgram.check_key()
+            await deepgram.browser_token(30)
+            return {"ok": True, "message": f"Key works – project {', '.join(projects) or '?'}, caption tokens OK"}
         if provider == "elevenlabs":
             v = await elevenlabs.voices()
             return {"ok": True, "message": f"Key works – {len(v)} voices"}
@@ -183,7 +190,7 @@ async def stt_token(user=Depends(current_user)):
         if db.get_settings(con).get("live_captions") != "1":
             raise HTTPException(403, "Live captions are switched off (Admin → Settings)")
     try:
-        return {"token": await assemblyai.browser_token(3600)}
+        return await stt.browser_session()
     except net.ProviderError as e:
         raise HTTPException(502, str(e))
 

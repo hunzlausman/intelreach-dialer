@@ -18,6 +18,7 @@ PROVIDERS = {
     "custom_llm": {"label": "OpenAI-compatible (Groq, DeepSeek, OpenRouter, Ollama…)",
                    "fields": {"base_url": False, "api_key": True}},
     "assemblyai": {"label": "AssemblyAI", "fields": {"api_key": True}},
+    "deepgram":   {"label": "Deepgram", "fields": {"api_key": True, "model": False, "language": False}},
     "elevenlabs": {"label": "ElevenLabs", "fields": {"api_key": True, "webhook_secret": True}},
     "telnyx":     {"label": "Telnyx", "fields": {"api_key": True, "connection_id": False, "public_key": False,
                                                  "from_number": False}},

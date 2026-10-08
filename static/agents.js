@@ -84,6 +84,8 @@ async function editAgent(a, done) {
         <label>Voice ${pick('voice_id', voices, c.voice_id, (v) => [v.id, v.name], 'ElevenLabs voice ID')}</label>
         <label>ElevenLabs model <input name="tts_model" value="${esc(c.tts_model)}" placeholder="eleven_flash_v2_5"></label>
         <label>Language code <input name="language" value="${esc(c.language)}" placeholder="en-US"></label>
+        <label>Speech-to-text <select name="stt_provider">${options([['', 'Default (Settings)'], ['assemblyai', 'AssemblyAI'],
+          ['deepgram', 'Deepgram']], c.stt_provider)}</select></label>
         <label>Phone carrier <select name="carrier">${options([['telnyx', 'Telnyx'], ['twilio', 'Twilio']], c.carrier)}</select></label>
         <label>Caller ID (empty = default) <input name="from_number" value="${esc(c.from_number)}" placeholder="+15551234567"></label>
         <label>Transfer hot leads to (+number or sip:) <input name="transfer_to" value="${esc(c.transfer_to)}"></label>

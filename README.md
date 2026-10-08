@@ -97,6 +97,9 @@ cd /opt/intelreach-crm && set -a && . /etc/intelreach-crm.env && set +a && \
 ## Step 4 – Credentials, trunks, numbers
 1. Open **https://dialer.intelreach.com** and sign in.
 2. **Admin → Integrations → Twilio**: paste the Account SID and Auth Token → **Save** → **Test**.
+   For live captions, recording transcripts and AI agents also add a speech-to-text key – **AssemblyAI** or
+   **Deepgram** (Deepgram key with the *Member* role or higher) – and pick it in **Admin → Settings → Speech-to-text**.
+   Each AI agent can override that choice.
 3. **Admin → SIP trunks → + Trunk**: pick the provider, enter the SIP server (e.g. `intelreach-crm.pstn.twilio.com`),
    username and password. Add one per provider/account. Asterisk picks the change up within a few seconds
    (`intelreach-crm-trunks.path` reloads PJSIP and opens the firewall to the IPs you list for incoming calls).

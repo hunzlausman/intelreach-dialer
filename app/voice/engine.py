@@ -3,7 +3,7 @@
 One VoiceSession per call. The carrier (Telnyx or Twilio) streams 8 kHz μ-law audio
 over a WebSocket (see voice/media.py); the session answers on the same socket.
 
-    STT  AssemblyAI streaming (turn detection built in)
+    STT  AssemblyAI or Deepgram streaming (turn detection built in) – ai/stt.py
     LLM  Claude / OpenAI / Gemini / any OpenAI-compatible model (app/ai/llm.py)
     TTS  ElevenLabs streaming (μ-law 8 kHz, no transcoding) or Telnyx `speak`
 
@@ -18,7 +18,7 @@ import secrets
 import time
 
 from .. import db, outcomes
-from ..ai import assemblyai, elevenlabs, llm
+from ..ai import elevenlabs, llm, stt
 from . import carriers
 
 log = logging.getLogger("crm.voice")
@@ -122,8 +122,9 @@ class VoiceSession:
         LIVE[self.transport.external_id] = self
         self.tasks.append(asyncio.create_task(self._player()))
         self.tasks.append(asyncio.create_task(self._watchdog()))
-        self.stt = assemblyai.StreamingSTT(self._on_partial, self._on_turn, language=self.cfg.get("language", ""))
         try:
+            self.stt = stt.streaming(self._on_partial, self._on_turn, language=self.cfg.get("language", ""),
+                                     override=self.cfg.get("stt_provider", ""))
             await self.stt.start()
         except Exception as e:                       # no STT = no conversation; say so and hang up
             log.warning("STT failed: %s", e)

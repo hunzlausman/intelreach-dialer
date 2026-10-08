@@ -1,11 +1,11 @@
-"""After a call: transcript (AssemblyAI, if only a recording exists) -> LLM summary,
+"""After a call: transcript (AssemblyAI / Deepgram, if only a recording exists) -> LLM summary,
 outcome, sentiment, lead score, next step, extracted fields -> call + contact."""
 import json
 import logging
 import os
 
 from .. import db, outcomes
-from . import assemblyai, llm
+from . import llm, stt
 
 log = logging.getLogger("crm.analysis")
 
@@ -46,7 +46,7 @@ async def _analyze(call_id):
         src = call["recording"]
         if not src.startswith("http") and not os.path.exists(src):
             raise RuntimeError(f"recording file missing: {src}")
-        items = await assemblyai.transcribe_file(src)
+        items = await stt.transcribe_file(src)
         with db.tx() as con:
             con.execute("UPDATE calls SET transcript = ? WHERE id = ?", (json.dumps(items, ensure_ascii=False), call_id))
     if not items:

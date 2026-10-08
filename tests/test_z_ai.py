@@ -1,5 +1,5 @@
 """Campaigns, AI agents, provider webhooks and the voice engine – with every
-external provider (Telnyx, ElevenLabs, AssemblyAI, LLMs) mocked."""
+external provider (Telnyx, ElevenLabs, AssemblyAI, Deepgram, LLMs) mocked."""
 import asyncio
 import base64
 import hashlib
@@ -39,6 +39,13 @@ def provider_mock(request: httpx.Request):
         return httpx.Response(200, json={"data": {"result": "ok", "balance": "12.5", "currency": "USD"}})
     if "convai/sip-trunk/outbound-call" in url:
         return httpx.Response(200, json={"success": True, "conversation_id": "conv-1", "sip_call_id": "x"})
+    if url == "https://api.deepgram.com/v1/projects":
+        return httpx.Response(200, json={"projects": [{"project_id": "p1", "name": "IntelReach"}]})
+    if url == "https://api.deepgram.com/v1/auth/grant":
+        return httpx.Response(200, json={"access_token": "dg-jwt", "expires_in": body["ttl_seconds"]})
+    if url.startswith("https://api.deepgram.com/v1/listen?"):
+        return httpx.Response(200, json={"results": {"utterances": [
+            {"speaker": 0, "transcript": "Hello, this is Sam."}, {"speaker": 1, "transcript": "Hi Sam, go ahead."}]}})
     if url.startswith("http://llm.test/v1/chat/completions"):
         reply = {"summary": "Wants a demo next week.", "outcome": "interested", "sentiment": "positive", "score": 82,
                  "next_step": "Send demo invite", "callback": "", "fields": {"budget": "5k"}}
@@ -399,3 +406,59 @@ def test_claude_streaming_with_tools(c):
     assert seen["body"]["fallbacks"] == "default" and seen["body"]["output_config"] == {"effort": "low"}
     assert "server-side-fallback-2026-07-01" in seen["beta"]
     assert seen["body"]["tools"][0]["eager_input_streaming"] is True
+
+
+def test_deepgram_speech_to_text(c, tmp_path):
+    from app.ai import assemblyai, deepgram, stt
+    assert c.put("/api/admin/integrations/deepgram", json={"api_key": "dg-key-0123456789", "language": "en"}).status_code == 200
+    items = {i["provider"]: i for i in c.get("/api/admin/integrations").json()["items"]}
+    assert items["deepgram"]["configured"] and "dg-key-0123456789" not in json.dumps(items)
+    r = c.post("/api/admin/integrations/deepgram/test").json()
+    assert r["ok"] and "IntelReach" in r["message"]
+    assert c.put("/api/admin/settings", json={"stt_provider": "whisper"}).status_code == 400
+    c.put("/api/admin/settings", json={"stt_provider": "deepgram", "live_captions": "1"})
+
+    # live captions: the browser gets a short-lived Deepgram token + stream settings, never the key
+    sess = c.get("/api/ai/stt-token").json()
+    assert sess["provider"] == "deepgram" and sess["token"] == "dg-jwt"
+    assert sess["params"]["encoding"] == "linear16" and sess["params"]["sample_rate"] == 16000
+    assert sess["params"]["language"] == "en" and sess["params"]["model"] == "nova-3"
+    assert SENT[-1][1].endswith("/auth/grant") and SENT[-1][2] == {"ttl_seconds": 300}
+
+    # recording transcript with speakers
+    rec = tmp_path / "1.wav"
+    rec.write_bytes(b"RIFF....WAVE")
+    out = run(stt.transcribe_file(str(rec)))
+    assert out == [{"role": "speaker 0", "text": "Hello, this is Sam."}, {"role": "speaker 1", "text": "Hi Sam, go ahead."}]
+    method, url, body = SENT[-1]
+    assert "diarize=true" in url and "language=en" in url and body == b"RIFF....WAVE"
+
+    # AI agents: settings choose Deepgram, an agent can still pick AssemblyAI
+    noop = lambda *_: None  # noqa: E731
+    assert isinstance(stt.streaming(noop, noop, language="es"), deepgram.StreamingSTT)
+    assert "language=es" in stt.streaming(noop, noop, language="es").url
+    assert isinstance(stt.streaming(noop, noop, override="assemblyai"), assemblyai.StreamingSTT)
+    assert c.post("/api/ai-agents", json={"name": "x", "kind": "custom",
+                                          "config": {"prompt": "hi", "stt_provider": "nope"}}).status_code == 400
+
+    # interim / final pieces become partials and whole turns
+    got = []
+
+    async def part(t):
+        got.append(("partial", t))
+
+    async def turn(t):
+        got.append(("turn", t))
+
+    turns = deepgram.Turns(part, turn)
+    for msg in ({"type": "Results", "is_final": False, "channel": {"alternatives": [{"transcript": "I want"}]}},
+                {"type": "Results", "is_final": True, "channel": {"alternatives": [{"transcript": "I want a demo"}]}},
+                {"type": "Results", "is_final": False, "channel": {"alternatives": [{"transcript": "next"}]}},
+                {"type": "Results", "is_final": True, "speech_final": True,
+                 "channel": {"alternatives": [{"transcript": "next week."}]}},
+                {"type": "Results", "is_final": True, "channel": {"alternatives": [{"transcript": "Thanks"}]}},
+                {"type": "UtteranceEnd"}):
+        run(turns.handle(msg))
+    assert got == [("partial", "I want"), ("partial", "I want a demo"), ("partial", "I want a demo next"),
+                   ("turn", "I want a demo next week."), ("partial", "Thanks"), ("turn", "Thanks")]
+    c.put("/api/admin/settings", json={"stt_provider": "assemblyai", "live_captions": "0"})

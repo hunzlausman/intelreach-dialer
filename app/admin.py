@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import config, db, hooks, phone, security, trunks, twilio_api, vault
+from .ai import stt
 from .security import require_admin
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 SETTING_KEYS = ("company_name", "inbound_mode", "ring_timeout", "default_country",
                 "allowed_prefixes", "blocked_prefixes", "max_call_minutes", "record_calls", "transcribe_recordings",
                 "live_captions", "analyze_calls", "analysis_llm", "analysis_model", "inbound_ai_agent",
-                "telnyx_inbound_agent", "default_trunk")
+                "telnyx_inbound_agent", "default_trunk", "stt_provider")
 FLAGS = ("record_calls", "transcribe_recordings", "live_captions", "analyze_calls")
 
 
@@ -105,6 +106,8 @@ def put_settings(body: dict):
                 raise HTTPException(400, "Unknown inbound mode")
             if k in FLAGS:
                 v = "1" if v in ("1", "true", "True", "on") else "0"
+            if k == "stt_provider" and v not in stt.PROVIDERS:
+                raise HTTPException(400, "Speech-to-text must be assemblyai or deepgram")
             if k == "default_trunk" and v and not trunks.find(con, v):
                 raise HTTPException(400, "Choose one of your enabled SIP trunks")
             if k in ("inbound_ai_agent", "telnyx_inbound_agent") and v and not v.isdigit():

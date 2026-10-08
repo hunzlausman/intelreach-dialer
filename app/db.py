@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS settings (
     value       TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS integrations (
-    provider    TEXT PRIMARY KEY,                   -- openai | anthropic | gemini | custom_llm | assemblyai | elevenlabs | telnyx
+    provider    TEXT PRIMARY KEY,                   -- openai | anthropic | gemini | custom_llm | assemblyai | deepgram | elevenlabs | telnyx | twilio
     secret      TEXT NOT NULL,                      -- encrypted JSON
     updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
@@ -163,7 +163,8 @@ DEFAULT_SETTINGS = {
     "max_call_minutes": "60",
     # recording / AI on human calls
     "record_calls": "0",            # Asterisk MixMonitor on CRM calls (check local consent laws)
-    "transcribe_recordings": "1",   # AssemblyAI transcript of every recording
+    "stt_provider": "assemblyai",   # speech-to-text: assemblyai | deepgram (captions, recordings, AI agents' default)
+    "transcribe_recordings": "1",   # transcript of every recording (stt_provider)
     "live_captions": "0",           # agents see live captions + AI tips (AssemblyAI streaming)
     "analyze_calls": "1",           # LLM summary / outcome / score after each call with a transcript
     "analysis_llm": "anthropic",    # provider for summaries & tips

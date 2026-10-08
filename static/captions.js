@@ -1,6 +1,7 @@
 // Live captions + AI tips for agents on human calls.
 // The browser streams both sides of the call (agent mic, remote audio) to
-// AssemblyAI with a short-lived token, shows the words live, asks the CRM's LLM
+// AssemblyAI or Deepgram (Admin → Settings → Speech-to-text) with a short-lived
+// token, shows the words live, asks the CRM's LLM
 // for a tip after each thing the contact says, and saves the transcript at the end.
 import { $, api, esc } from './core.js';
 
@@ -17,15 +18,45 @@ function downsample(input, fromRate) {
   return out;
 }
 
-class Side {
-  constructor(ctx, stream, role, token, onTurn, onPartial) {
-    this.role = role;
-    this.buf = [];
-    this.ws = new WebSocket(`wss://streaming.assemblyai.com/v3/ws?sample_rate=${RATE}&encoding=pcm_s16le&token=${encodeURIComponent(token)}`);
-    this.ws.onmessage = (m) => {
-      let d; try { d = JSON.parse(m.data); } catch { return; }
+// provider message -> onPartial(text) while speaking / onTurn(text) when a sentence is finished
+const PROVIDERS = {
+  assemblyai: {
+    open: (s) => new WebSocket(`wss://streaming.assemblyai.com/v3/ws?sample_rate=${RATE}&encoding=pcm_s16le&token=${encodeURIComponent(s.token)}`),
+    close: { type: 'Terminate' },
+    handler: (role, onTurn, onPartial) => (d) => {
       if (d.type !== 'Turn' || !d.transcript) return;
       if (d.end_of_turn) onTurn(role, d.transcript); else onPartial(role, d.transcript);
+    },
+  },
+  deepgram: {
+    open: (s) => new WebSocket(`wss://api.deepgram.com/v1/listen?${new URLSearchParams(s.params)}`, ['bearer', s.token]),
+    close: { type: 'CloseStream' },
+    handler: (role, onTurn, onPartial) => {
+      let done = [];                     // final pieces of the sentence so far
+      const flush = () => { if (done.length) { onTurn(role, done.join(' ')); done = []; } };
+      return (d) => {
+        if (d.type === 'UtteranceEnd') { flush(); return; }
+        if (d.type !== 'Results') return;
+        const text = (((d.channel || {}).alternatives || [{}])[0].transcript || '').trim();
+        if (d.is_final) {
+          if (text) done.push(text);
+          if (d.speech_final) flush(); else if (done.length) onPartial(role, done.join(' '));
+        } else if (text) onPartial(role, [...done, text].join(' '));
+      };
+    },
+  },
+};
+
+class Side {
+  constructor(ctx, stream, role, stt, onTurn, onPartial) {
+    this.role = role;
+    this.buf = [];
+    this.prov = PROVIDERS[stt.provider] || PROVIDERS.assemblyai;
+    this.ws = this.prov.open(stt);
+    const handle = this.prov.handler(role, onTurn, onPartial);
+    this.ws.onmessage = (m) => {
+      let d; try { d = JSON.parse(m.data); } catch { return; }
+      handle(d);
     };
     this.src = ctx.createMediaStreamSource(stream);
     this.node = new AudioWorkletNode(ctx, 'pcm-capture');
@@ -45,7 +76,7 @@ class Side {
 
   stop() {
     try { this.src.disconnect(); this.node.disconnect(); } catch { /* */ }
-    try { if (this.ws.readyState === 1) this.ws.send(JSON.stringify({ type: 'Terminate' })); this.ws.close(); } catch { /* */ }
+    try { if (this.ws.readyState === 1) this.ws.send(JSON.stringify(this.prov.close)); this.ws.close(); } catch { /* */ }
   }
 }
 
@@ -57,8 +88,8 @@ export async function startCaptions(session, callId) {
   const mic = pc.getSenders().map((s) => s.track).filter((t) => t && t.kind === 'audio');
   const remote = pc.getReceivers().map((r) => r.track).filter((t) => t && t.kind === 'audio');
   if (!mic.length || !remote.length) return;
-  let token;
-  try { token = (await api('/ai/stt-token')).token; } catch (e) {
+  let stt;
+  try { stt = await api('/ai/stt-token'); } catch (e) {
     box.hidden = false; box.innerHTML = `<div class="muted">Live captions unavailable: ${esc(e.message)}</div>`; return;
   }
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -88,8 +119,8 @@ export async function startCaptions(session, callId) {
         .then((r) => { state.tip = r.tip; render(); }).catch(() => {});
     }
   };
-  state.sides.push(new Side(ctx, new MediaStream(mic), 'agent', token, onTurn, onPartial));
-  state.sides.push(new Side(ctx, new MediaStream(remote), 'contact', token, onTurn, onPartial));
+  state.sides.push(new Side(ctx, new MediaStream(mic), 'agent', stt, onTurn, onPartial));
+  state.sides.push(new Side(ctx, new MediaStream(remote), 'contact', stt, onTurn, onPartial));
   render();
 }
 

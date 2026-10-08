@@ -198,8 +198,12 @@ async function loadSettings(p) {
       <label>AI agent for calls to Telnyx numbers <select name="telnyx_inbound_agent">${options(agentOpts, s.telnyx_inbound_agent)}</select></label>
     </div></div>
     <div class="card panel"><h2>Recording &amp; AI on agent calls</h2>
+      <div class="grid2" style="margin-bottom:8px">
+        <label>Speech-to-text (captions, recording transcripts, AI agents' default) <select name="stt_provider">${options([
+          ['assemblyai', 'AssemblyAI'], ['deepgram', 'Deepgram']], s.stt_provider)}</select></label>
+      </div>
       ${chk('record_calls', 'Record agent calls (tell callers / follow your local consent laws)')}
-      ${chk('transcribe_recordings', 'Transcribe recordings with AssemblyAI')}
+      ${chk('transcribe_recordings', 'Transcribe recordings')}
       ${chk('live_captions', 'Live captions + AI tips for agents during calls')}
       ${chk('analyze_calls', 'AI summary, outcome, sentiment and lead score after every call')}
       <div class="grid2" style="margin-top:8px">
@@ -218,7 +222,7 @@ async function loadSettings(p) {
 }
 
 // ----------------------------------------------------------- Integrations ----
-const FIELD_LABEL = { account_sid: 'Account SID', auth_token: 'Auth Token', api_key: 'API key', base_url: 'Base URL', webhook_secret: 'Post-call webhook secret',
+const FIELD_LABEL = { model: 'Model (empty = nova-3)', language: 'Language (empty = automatic / multilingual, or e.g. en, es)', account_sid: 'Account SID', auth_token: 'Auth Token', api_key: 'API key', base_url: 'Base URL', webhook_secret: 'Post-call webhook secret',
   connection_id: 'Call Control App ID (connection_id)', public_key: 'Webhook public key', from_number: 'Default caller ID (Telnyx number)' };
 const HELP = {
   twilio: 'Console → Account → API keys & tokens. Used for the Twilio number, webhook signatures and Twilio AI calls (SIP trunks: Admin → SIP trunks).',
@@ -227,6 +231,7 @@ const HELP = {
   gemini: 'Uses Google\'s OpenAI-compatible endpoint.',
   custom_llm: 'Any OpenAI-compatible API: Groq (https://api.groq.com/openai/v1), DeepSeek, OpenRouter, Together, a local Ollama/vLLM…',
   assemblyai: 'Speech-to-text: live captions, AI-call listening, recording transcripts.',
+  deepgram: 'Speech-to-text (choose it in Settings, or per AI agent). The key needs the Member role or higher so the CRM can issue live-caption tokens.',
   elevenlabs: 'Voices for the custom pipeline and voicemail drops, and ElevenLabs agents. Webhook → Settings → Post-call webhook.',
   telnyx: 'Call Control App: set its webhook URL to the one below. Public key: Portal → Keys & Credentials.',
 };

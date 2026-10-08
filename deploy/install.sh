@@ -111,11 +111,18 @@ MODDIR=${MODDIR:-/usr/lib/asterisk/modules}
 if [ ! -f "$MODDIR/func_curl.so" ] && command -v apt-get >/dev/null && dpkg -s asterisk >/dev/null 2>&1; then
   apt-get install -y -qq asterisk-modules >/dev/null || true       # Debian/Ubuntu packaged Asterisk
 fi
-asterisk -rx "module load res_curl.so" >/dev/null 2>&1 || true
+# a shared library the modules need (usually libcurl) missing → install it
+if ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>/dev/null | grep -q 'libcurl.*not found' && command -v apt-get >/dev/null; then
+  apt-get install -y -qq libcurl4 >/dev/null || true
+fi
+RES_LOAD=$(asterisk -rx "module load res_curl.so" 2>&1 || true)
 CURL_LOAD=$(asterisk -rx "module load func_curl.so" 2>&1 || true)
 if ! asterisk -rx "module show like func_curl" | grep -q func_curl; then
   echo "  module directory: $MODDIR"
   ls -l "$MODDIR"/func_curl.so "$MODDIR"/res_curl.so 2>&1 | sed 's/^/  /'
+  echo "  missing libraries:"; ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>&1 | grep 'not found' | sed 's/^/    /'
+  echo "  loaded:"; asterisk -rx "module show like curl" | sed 's/^/    /'
+  echo "  res_curl: $RES_LOAD"
   echo "  asterisk says: $CURL_LOAD"
   echo "  details: grep -i curl /var/log/asterisk/messages* | tail"
   die "func_curl is not loaded – the CRM dialplan needs CURL(). Packaged Asterisk: apt install asterisk-modules. \

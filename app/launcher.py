@@ -40,6 +40,24 @@ def _caller_id(cfg, settings, carrier):
     return ""                                  # telnyx: integration default from_number
 
 
+def fix_agent_carriers():
+    """Custom agents saved with a carrier whose API is not set up (e.g. 'telnyx' – the old default) can never
+    place a call; switch them to the SIP trunks. Runs at startup."""
+    import json
+    unusable = {"telnyx": not vault.key("telnyx"), "twilio": not all(vault.twilio_creds())}
+    with db.tx() as con:
+        if not con.execute("SELECT 1 FROM sip_trunks WHERE enabled = 1").fetchone():
+            return
+        for a in con.execute("SELECT id, name, config FROM ai_agents WHERE kind = 'custom'").fetchall():
+            cfg = db.jload(a["config"])
+            if unusable.get(cfg.get("carrier")):
+                cfg["carrier"] = "sip"
+                if cfg.get("tts_provider") == "telnyx":
+                    cfg["tts_provider"] = "elevenlabs"
+                con.execute("UPDATE ai_agents SET config = ? WHERE id = ?", (json.dumps(cfg), a["id"]))
+                log.info("AI agent %s now calls through the SIP trunk (its carrier's API is not set up)", a["name"])
+
+
 def ai_provider(agent, carrier=""):
     """How this agent's call is placed. carrier: a campaign's choice – 'sip', 'telnyx', 'twilio',
     or 'agent' / '' = the agent's own Phone carrier. Only Custom agents can be re-routed."""

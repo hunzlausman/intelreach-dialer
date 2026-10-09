@@ -10,3 +10,4 @@ venv/
 *.env
 !deploy/crm.env.example
 *.csv
+VERSION

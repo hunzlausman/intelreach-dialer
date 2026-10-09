@@ -1,5 +1,6 @@
 """Settings read from the environment (/etc/intelreach-crm.env on the server)."""
 import os
+from pathlib import Path
 
 
 def env(key, default=""):
@@ -7,6 +8,10 @@ def env(key, default=""):
 
 
 DB_PATH = env("CRM_DB", "/var/lib/intelreach-crm/crm.db")
+
+# git commit of the running code (deploy/install.sh writes it) – shown in Admin and /api/health
+_vf = Path(__file__).resolve().parent.parent / "VERSION"
+VERSION = _vf.read_text().strip() if _vf.exists() else "dev"
 PUBLIC_URL = env("CRM_PUBLIC_URL", "https://dialer.intelreach.com").rstrip("/")
 COOKIE_SECURE = env("CRM_COOKIE_SECURE", "1") == "1"
 

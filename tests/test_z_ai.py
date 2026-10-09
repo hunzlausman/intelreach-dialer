@@ -615,3 +615,9 @@ def test_ai_campaign_calls_through_the_sip_trunk_by_default(c, monkeypatch):
         assert "ElevenLabs API key missing" in launcher.route_problem(con, a, "sip")
     r = c.post(f"/api/campaigns/{camp['id']}/status", json={"status": "running"})
     assert r.status_code == 400 and "ElevenLabs" in r.json()["detail"]
+
+    # startup fix: a Custom agent on the Telnyx API carrier without a Telnyx key is moved to the SIP trunk
+    launcher.fix_agent_carriers()
+    fixed = next(x for x in c.get("/api/ai-agents").json()["items"] if x["id"] == agent["id"])
+    assert fixed["config"]["carrier"] == "sip"
+    assert c.get("/api/health").json()["version"] and c.get("/app.js").headers["cache-control"] == "no-cache"

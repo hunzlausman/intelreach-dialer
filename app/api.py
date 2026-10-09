@@ -66,6 +66,7 @@ def me(user=Depends(current_user)):
         "sip": sip,
         "company": s["company_name"],
         "callerId": caller_id,
+        "version": config.VERSION,
         "defaultCountry": s["default_country"],
         "liveCaptions": s.get("live_captions") == "1",
         "recording": s.get("record_calls") == "1",

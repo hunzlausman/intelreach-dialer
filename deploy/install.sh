@@ -70,6 +70,7 @@ rsync -a --delete --exclude venv --exclude __pycache__ "$REPO/app" "$REPO/static
 "$APP/venv/bin/pip" install -q -r "$APP/requirements.txt"
 chown -R "$SVC:$SVC" /var/lib/intelreach-crm
 chown root:"$SVC" "$ENVF"; chmod 640 "$ENVF"
+git -C "$REPO" rev-parse --short HEAD > "$APP/VERSION" 2>/dev/null || echo unknown > "$APP/VERSION"
 # the CRM writes the trunk config here, Asterisk reads it (setgid: new files get group asterisk)
 mkdir -p "$TRUNKS_DIR"
 [ -f "$TRUNKS_DIR/pjsip_trunks.conf" ] || echo "; no SIP trunks yet (Admin → SIP trunks)" > "$TRUNKS_DIR/pjsip_trunks.conf"
@@ -170,7 +171,7 @@ systemctl enable -q "$SVC"
 systemctl restart "$SVC"
 for i in $(seq 1 20); do curl -fsS "http://127.0.0.1:$CRM_PORT/api/health" >/dev/null 2>&1 && break; sleep 0.5; done
 curl -fsS "http://127.0.0.1:$CRM_PORT/api/health" >/dev/null || die "CRM did not start: journalctl -u $SVC -n 50"
-ok "running on 127.0.0.1:$CRM_PORT"
+ok "running on 127.0.0.1:$CRM_PORT – version $(cat "$APP/VERSION")"
 bash "$APP/scripts/apply_trunks.sh" && ok "SIP trunks applied ($(grep -c '^\[crm-trunk-[0-9]*\]$' "$TRUNKS_DIR/pjsip_trunks.conf" || true) endpoints)"
 
 step "8/8 nginx + certificate for $CRM_DOMAIN"

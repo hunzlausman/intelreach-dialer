@@ -6,7 +6,8 @@ export async function viewAdmin(el, ctx) {
   el.innerHTML = `<div class="tabs">
       <a href="#/admin/twilio" data-tab="twilio">Twilio number</a><a href="#/admin/trunks" data-tab="trunks">SIP trunks</a>
       <a href="#/admin/settings" data-tab="settings">Settings</a>
-      <a href="#/admin/integrations" data-tab="integrations">Integrations</a><a href="#/admin/agents" data-tab="agents">Agents</a></div>
+      <a href="#/admin/integrations" data-tab="integrations">Integrations</a><a href="#/admin/agents" data-tab="agents">Agents</a>
+      <span class="muted" style="margin-left:auto;align-self:center;font-size:12px">version ${esc(session.me.version || '?')}</span></div>
     <div id="adminBody"></div>`;
   const tab = ctx.sub || 'twilio';
   el.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));

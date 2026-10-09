@@ -120,6 +120,7 @@ class VoiceSession:
         self.tag = f"[AI call {self.call_id}]"
         self.audio_frames, self.audio_peak, self.audio_logged = 0, 0, 0.0
         self.last_partial, self.last_partial_at = "", 0.0
+        self.turn_at = None                            # when the caller's last turn ended (response-time log)
         self.stt_q = asyncio.Queue(maxsize=500)       # caller audio -> STT (10 s); the carrier never waits for the STT
         self.stt_dropped = 0
 
@@ -218,6 +219,7 @@ class VoiceSession:
 
     async def _on_turn(self, text):
         log.info("%s STT final – caller said: %s", self.tag, text[:300])
+        self.turn_at = time.time()
         self.last_activity = time.time()
         self.nudged = False
         if self.ending:
@@ -247,7 +249,7 @@ class VoiceSession:
                 log.info("%s LLM request (%d messages)", self.tag, len(self.history))
                 async for kind, data in llm.stream_chat(self.cfg.get("llm_provider", "anthropic"),
                                                         self.cfg.get("llm_model", ""), self.system, self.history,
-                                                        TOOLS, effort="low", max_tokens=1024):
+                                                        TOOLS, effort="low", max_tokens=1024, realtime=True):
                     if kind == "text":
                         if first_at is None:
                             first_at = time.time()
@@ -336,6 +338,10 @@ class VoiceSession:
             async for chunk in elevenlabs.tts_stream(text, self.cfg.get("voice_id", ""), self.cfg.get("tts_model", "")):
                 if first_at is None:
                     first_at = time.time()
+                    if self.turn_at:
+                        log.info("%s response time %d ms (caller's turn ended → first reply audio)", self.tag,
+                                 (first_at - self.turn_at) * 1000)
+                        self.turn_at = None
                 total += len(chunk)
                 data = rest + chunk
                 cut = len(data) - len(data) % FRAME

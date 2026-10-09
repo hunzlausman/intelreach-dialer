@@ -697,3 +697,34 @@ def test_assemblyai_llm_gateway(c, monkeypatch):
     agent = c.post("/api/ai-agents", json={"name": "Gw", "kind": "custom", "config": {
         "prompt": "x", "llm_provider": "assemblyai", "llm_model": "claude-haiku-4-5-20251001", "carrier": "sip"}})
     assert agent.status_code == 200
+
+
+
+def test_realtime_calls_turn_llm_thinking_off(c, monkeypatch):
+    """Live calls send reasoning_effort=none to Gemini Flash; a model that refuses it is retried without."""
+    import httpx2
+    from app import net as net_mod
+    from app.ai import assemblyai
+    seen = []
+
+    def api(request):
+        body = json.loads(request.content)
+        seen.append(body.get("reasoning_effort"))
+        if body.get("reasoning_effort") and body["model"] == "picky-model":
+            return httpx2.Response(400, json={"error": {"message": "reasoning_effort not supported"}})
+        sse = 'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\ndata: [DONE]\n\n'
+        return httpx2.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(net_mod, "transport", httpx2.MockTransport(api))
+
+    async def collect(provider, model, realtime):
+        return [ev async for ev in llm.stream_chat(provider, model, "s", [{"role": "user", "text": "x"}], realtime=realtime)]
+
+    run(collect("assemblyai", "gemini-2.5-flash", True))
+    run(collect("assemblyai", "gemini-2.5-flash", False))
+    assert seen == ["none", None]
+    seen.clear()
+    monkeypatch.setattr(llm, "_reasoning_choices", lambda m: ["none"])
+    run(collect("assemblyai", "picky-model", True))
+    run(collect("assemblyai", "picky-model", True))
+    assert seen == ["none", None, None]                  # refused once, then remembered
+    assert "min_turn_silence=160" in assemblyai.StreamingSTT(None, None).url

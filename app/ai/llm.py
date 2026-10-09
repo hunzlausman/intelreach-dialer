@@ -60,15 +60,16 @@ def resolve(provider, model):
     return provider, model
 
 
-async def stream_chat(provider, model, system, history, tools=None, effort="low", max_tokens=2048):
-    """Yields ("text", chunk) while generating, then ("done", {"text", "tool_calls", "raw"})."""
+async def stream_chat(provider, model, system, history, tools=None, effort="low", max_tokens=2048, realtime=False):
+    """Yields ("text", chunk) while generating, then ("done", {"text", "tool_calls", "raw"}).
+    realtime: a live phone call – ask the model not to "think" first (first word in ~0.3 s instead of ~1.2 s)."""
     provider, model = resolve(provider, model)
     model = model or DEFAULT_MODELS.get(provider, "")
     if provider == "anthropic":
         async for ev in _anthropic_stream(model, system, history, tools or [], effort, max_tokens):
             yield ev
     elif provider in ("openai", "gemini", "assemblyai", "custom_llm"):
-        async for ev in _openai_stream(provider, model, system, history, tools or [], max_tokens):
+        async for ev in _openai_stream(provider, model, system, history, tools or [], max_tokens, realtime):
             yield ev
     else:
         raise LLMError(f"Unknown LLM provider '{provider}'")
@@ -225,9 +226,41 @@ async def _post_with_retry(c, url, body, headers, provider, tries=3):
         await asyncio.sleep(wait)
 
 
-async def _openai_stream(provider, model, system, history, tools, max_tokens):
+NO_REASONING_PARAM = set()     # (provider, model, value) the API refused – not sent again
+
+
+def _reasoning_choices(model):
+    """reasoning_effort values that turn thinking off / down, best first ([] = leave it alone)."""
+    m = (model or "").lower()
+    if "gemini" in m and "pro" not in m:
+        return ["none"]                        # Gemini 2.5 Flash / Flash-Lite: no thinking
+    if m.startswith(("gpt-5", "gpt-6", "o3", "o4")) or "/gpt-5" in m:
+        return ["none", "minimal"]
+    return []
+
+
+async def _openai_stream(provider, model, system, history, tools, max_tokens, realtime=False):
+    choices = [v for v in (_reasoning_choices(model) if realtime else []) if (provider, model, v) not in NO_REASONING_PARAM]
+    for value in choices + [None]:
+        started = False
+        try:
+            async for ev in _openai_stream_once(provider, model, system, history, tools, max_tokens, value):
+                started = True
+                yield ev
+            return
+        except net.ProviderError as e:
+            if value and not started and f"{provider} 400" in str(e):
+                NO_REASONING_PARAM.add((provider, model, value))
+                log.info("%s %s does not take reasoning_effort=%s – sending without it", provider, model, value)
+                continue
+            raise
+
+
+async def _openai_stream_once(provider, model, system, history, tools, max_tokens, reasoning_effort=None):
     base, key = _openai_target(provider)
     body = {"model": model, "messages": to_openai(system, history), "stream": True, "max_tokens": max_tokens}
+    if reasoning_effort:
+        body["reasoning_effort"] = reasoning_effort
     if tools:
         body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                            "parameters": t["parameters"]}} for t in tools]

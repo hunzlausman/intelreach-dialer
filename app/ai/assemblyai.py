@@ -10,6 +10,9 @@ from .. import net, vault
 log = logging.getLogger("crm.assemblyai")
 
 STREAM_URL = "wss://streaming.assemblyai.com/v3/ws"
+# Turn detection for phone agents: snappy but tolerant of short pauses (AssemblyAI docs: "aggressive" is 160 / 400,
+# "balanced" 400 / 1280). If the API refuses these the stream is opened without them.
+TURN_PARAMS = {"end_of_turn_confidence_threshold": 0.4, "min_turn_silence": 160, "max_turn_silence": 700}
 API = "https://api.assemblyai.com/v2"
 
 
@@ -41,20 +44,30 @@ class StreamingSTT:
         params = {"sample_rate": sample_rate, "encoding": encoding}
         if language and not language.startswith("en"):
             params["speech_model"] = "universal-streaming-multilingual"
-        self.url = STREAM_URL + "?" + urllib.parse.urlencode(params)
+        self.plain_url = STREAM_URL + "?" + urllib.parse.urlencode(params)
+        self.url = STREAM_URL + "?" + urllib.parse.urlencode({**params, **TURN_PARAMS})
         self.ws = None
         self.buf = bytearray()
         self.reader = None
         self.send_failed = False
 
     async def start(self):
+        try:
+            self.ws = await self._connect(self.url)
+        except Exception as e:
+            if "400" not in str(e) and "422" not in str(e):
+                raise
+            log.warning("AssemblyAI refused the turn-detection settings (%s) – using its defaults", e)
+            self.ws = await self._connect(self.plain_url)
+        self.reader = asyncio.create_task(self._read())
+
+    async def _connect(self, url):
         import websockets
         headers = {"Authorization": _key()}
         try:
-            self.ws = await websockets.connect(self.url, additional_headers=headers, max_size=None)
+            return await websockets.connect(url, additional_headers=headers, max_size=None)
         except TypeError:                     # websockets < 14
-            self.ws = await websockets.connect(self.url, extra_headers=headers, max_size=None)
-        self.reader = asyncio.create_task(self._read())
+            return await websockets.connect(url, extra_headers=headers, max_size=None)
 
     async def send(self, audio: bytes):
         # AssemblyAI wants 50–1000 ms per message; phone frames are 20 ms

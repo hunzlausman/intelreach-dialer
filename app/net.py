@@ -20,6 +20,8 @@ def check(r, who):
             body = r.json()
             if isinstance(body, list) and body:          # Gemini wraps errors: [{"error": {...}}]
                 body = body[0]
+            if isinstance(body, dict) and isinstance((body.get("metadata") or {}).get("errors"), list):
+                body = {"message": "; ".join(map(str, body["metadata"]["errors"]))}   # AssemblyAI LLM Gateway
             if isinstance(body, dict):
                 err = body.get("error")
                 msg = (body.get("detail") or body.get("message") or body.get("errors")

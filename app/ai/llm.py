@@ -284,7 +284,7 @@ async def _openai_stream(provider, model, system, history, tools, max_tokens, re
                 NO_REASONING_PARAM.add((provider, model, value))
                 log.info("%s %s does not take reasoning_effort=%s – sending without it", provider, model, value)
                 continue
-            if tools_now and not started and f"{provider} 400" in str(e):
+            if tools_now and not started and f"{provider} 400" in str(e) and "opt-in" not in str(e)                     and "not available" not in str(e):
                 continue
             raise
 

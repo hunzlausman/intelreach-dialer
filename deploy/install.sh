@@ -89,7 +89,7 @@ if asterisk -rx "pjsip show transports" | grep -E 'udp .*:5060' | grep -v transp
   die "Another PJSIP UDP transport already uses port 5060 – remove it or move it to another port first."
 fi
 render() {
-  sed -e "s|@PUBLIC_IP@|$PUBLIC_IP|g" -e "s|@TRUNKS_DIR@|$TRUNKS_DIR|g" \
+  sed -e "s|@PUBLIC_IP@|$PUBLIC_IP|g" -e "s|@TRUNKS_DIR@|$TRUNKS_DIR|g" -e "s|@AI_PORT@|${CRM_AUDIOSOCKET_PORT:-8045}|g" \
       -e "s|@CRM_PORT@|$CRM_PORT|g" -e "s|@CRM_SECRET@|$CRM_AST_SECRET|g" -e "s|@REC_DIR@|$CRM_RECORDINGS|g" "$1" > "$2"
 }
 render "$REPO/asterisk/pjsip_crm.conf" "$AST/pjsip_crm.conf"
@@ -130,6 +130,17 @@ Built from source: apt install libcurl4-openssl-dev, then in the source folder .
 (enable func_curl + res_curl) && make && make install, and run this script again."
 fi
 ok "func_curl loaded"
+# AI agents over the SIP trunks: Dial(AudioSocket/…) + call files from the CRM
+asterisk -rx "module load chan_audiosocket.so" >/dev/null 2>&1 || true
+if asterisk -rx "module show like chan_audiosocket" | grep -q chan_audiosocket; then
+  ok "chan_audiosocket loaded (AI agents on SIP trunks)"
+else
+  warn "chan_audiosocket is not available – AI agents can't use the SIP trunks (Telnyx/Twilio API calls still work)"
+fi
+SPOOL=${CRM_AST_SPOOL:-/var/spool/asterisk/outgoing}
+mkdir -p "$SPOOL"; chown asterisk:asterisk "$SPOOL"; chmod 2770 "$SPOOL"
+chmod g+x "$(dirname "$SPOOL")"
+ok "CRM may start AI calls ($SPOOL)"
 asterisk -rx "module reload res_pjsip.so" >/dev/null
 asterisk -rx "dialplan reload" >/dev/null
 if asterisk -rx "pjsip show transports" | grep -q transport-udp-crm; then

@@ -48,9 +48,12 @@ async function loadTwilio(p, ctx) {
 // ------------------------------------------------------------ SIP trunks ----
 const yes = (v) => v === true || v === 1 || v === '1';
 
+const INBOUND_LABEL = { agents: 'ring agents', agents_then_ai: 'ring agents, then AI', ai: 'AI agent answers', reject: 'rejected' };
+
 async function loadTrunks(p) {
-  const d = await api('/admin/trunks').catch(fail);
+  const [d, ag] = await Promise.all([api('/admin/trunks').catch(fail), api('/ai-agents').catch(() => ({ items: [] }))]);
   if (!d) return;
+  d.aiAgents = ag.items.filter((a) => a.kind === 'custom');
   const tname = (id) => (d.items.find((t) => t.id === id) || {}).name || '—';
   const def = d.items.find((t) => String(t.id) === String(d.defaultTrunk)) || d.items.find((t) => t.enabled);
   p.innerHTML = `<div class="card panel"><div class="toolbar" style="margin:0 0 8px"><h2 style="margin:0;flex:1">SIP trunks</h2>
@@ -74,7 +77,8 @@ async function loadTrunks(p) {
       ${d.twilioNumber ? `The connected Twilio number ${esc(d.twilioNumber)} is used when a trunk has no number of its own.` : ''}</p>
     ${d.numbers.length ? `<div class="table-wrap"><table><thead><tr><th>Number</th><th>Label</th><th>Trunk</th><th>Incoming calls</th><th></th></tr></thead><tbody>
     ${d.numbers.map((n) => `<tr><td>${esc(n.number)}</td><td>${esc(n.label)}</td><td>${esc(n.trunk_id ? tname(n.trunk_id) : '—')}</td>
-      <td>${n.inbound === 'agents' ? 'ring agents' : '<span class="muted">rejected</span>'}</td>
+      <td>${n.inbound === 'reject' ? '<span class="muted">rejected</span>' : esc(INBOUND_LABEL[n.inbound] || n.inbound)}${
+        n.ai_agent_id && n.inbound !== 'agents' && n.inbound !== 'reject' ? ' · ' + esc((d.aiAgents.find((a) => a.id === n.ai_agent_id) || {}).name || 'AI agent') : ''}</td>
       <td><button class="btn small" data-nid="${n.id}">Edit</button></td></tr>`).join('')}
     </tbody></table></div>` : ''}</div>`;
   const again = () => loadTrunks(p);
@@ -154,12 +158,18 @@ function editNumber(num, d, done) {
     <label>Number <input name="number" value="${esc(num.number)}" placeholder="+15551234567" required></label>
     <label>Label <input name="label" value="${esc(num.label)}" placeholder="e.g. US sales line"></label>
     <label>Provider / trunk <select name="trunk_id">${options([['', '— none —'], ...d.items.map((t) => [t.id, t.name])], num.trunk_id)}</select></label>
-    <label>Incoming calls to this number <select name="inbound">${options([['agents', 'Ring the CRM agents'], ['reject', 'Reject']], num.inbound)}</select></label>
+    <label>Incoming calls to this number <select name="inbound">${options([['agents', 'Ring the CRM agents'],
+      ['agents_then_ai', 'Ring the CRM agents, then the AI agent'], ['ai', 'AI agent answers'], ['reject', 'Reject']], num.inbound)}</select></label>
+    <label data-ai>AI agent (Custom agents only) <select name="ai_agent_id">${options([['', '— choose —'],
+      ...d.aiAgents.map((a) => [a.id, a.name])], num.ai_agent_id)}</select></label>
     <p class="error" id="nerr"></p>
     <div class="modal-actions">
       ${n ? '' : '<button type="button" class="btn red ghost" id="ndel" style="margin-right:auto">Delete</button>'}
       <button type="button" class="btn ghost" id="ncancel">Cancel</button><button class="btn primary">Save</button></div>
   </form>`, (m) => {
+    const inb = m.querySelector('[name=inbound]');
+    const syncAi = () => { $('[data-ai]', m).hidden = !['ai', 'agents_then_ai'].includes(inb.value); };
+    inb.onchange = syncAi; syncAi();
     $('#ncancel', m).onclick = closeModal;
     if (!n) $('#ndel', m).onclick = async () => {
       if (!confirm(`Remove ${num.number} from the CRM? (It stays with the provider.)`)) return;

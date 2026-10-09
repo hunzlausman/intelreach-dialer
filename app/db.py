@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS phone_numbers (
     number      TEXT NOT NULL UNIQUE,               -- E.164
     label       TEXT NOT NULL DEFAULT '',
     trunk_id    INTEGER REFERENCES sip_trunks(id) ON DELETE SET NULL,   -- outgoing calls with this caller ID use it
-    inbound     TEXT NOT NULL DEFAULT 'agents',     -- calls arriving over the trunk: agents | reject
+    inbound     TEXT NOT NULL DEFAULT 'agents',     -- calls arriving over the trunk: agents | agents_then_ai | ai | reject
     created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 """
@@ -146,6 +146,7 @@ MIGRATIONS = [
     ("calls", "ai_fields", "TEXT NOT NULL DEFAULT '{}'"),
     ("calls", "amd", "TEXT NOT NULL DEFAULT ''"),
     ("calls", "analysis", "TEXT NOT NULL DEFAULT ''"),            # '' | pending | done | error: …
+    ("phone_numbers", "ai_agent_id", "INTEGER"),                   # AI agent for inbound = ai | agents_then_ai
 ]
 
 DEFAULT_SETTINGS = {

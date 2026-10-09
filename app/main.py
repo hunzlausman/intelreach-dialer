@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import admin, aiapi, api, campaigns, config, db, dialer, hooks, outcomes, trunks, webhooks
-from .voice import media
+from .voice import audiosocket, media
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -28,9 +28,12 @@ async def lifespan(_app):
     outcomes.MAIN_LOOP = asyncio.get_running_loop()
     os.makedirs(os.path.join(config.MEDIA_DIR, "vm"), exist_ok=True)
     task = asyncio.create_task(dialer.run_forever()) if config.RUN_DIALER else None
+    sock = await audiosocket.serve()
     yield
     if task:
         task.cancel()
+    if sock:
+        sock.close()
 
 
 app = FastAPI(title="IntelReach Calling CRM", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)

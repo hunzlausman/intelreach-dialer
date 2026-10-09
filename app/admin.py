@@ -177,12 +177,12 @@ def _save_number(nid, body):
         if dup and dup["id"] != nid:
             raise HTTPException(409, f"{v['number']} is already in the list")
         if nid:
-            if not con.execute("UPDATE phone_numbers SET number=?, label=?, trunk_id=?, inbound=? WHERE id=?",
+            if not con.execute("UPDATE phone_numbers SET number=?, label=?, trunk_id=?, inbound=?, ai_agent_id=? WHERE id=?",
                                (*v.values(), nid)).rowcount:
                 raise HTTPException(404, "Number not found")
         else:
-            nid = con.execute("INSERT INTO phone_numbers(number, label, trunk_id, inbound) VALUES (?, ?, ?, ?)",
-                              tuple(v.values())).lastrowid
+            nid = con.execute("INSERT INTO phone_numbers(number, label, trunk_id, inbound, ai_agent_id) "
+                              "VALUES (?, ?, ?, ?, ?)", tuple(v.values())).lastrowid
     return {"id": nid}
 
 

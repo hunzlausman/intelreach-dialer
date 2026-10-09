@@ -1,17 +1,19 @@
 """Places AI and voicemail calls.
 
 AI agent kinds
-  custom      our own pipeline (voice/engine.py) over Telnyx or Twilio media streams
+  custom      our own pipeline (voice/engine.py) over Telnyx or Twilio media streams,
+              or over your own SIP trunks (carrier "sip": Asterisk + AudioSocket)
   elevenlabs  an ElevenLabs Conversational AI agent (ElevenLabs runs the conversation)
   telnyx      a Telnyx AI Assistant (Telnyx runs the conversation, started on answer)
 """
 import asyncio
 import logging
 import os
+import uuid
 
-from . import config, db, net, outcomes
+from . import config, db, net, outcomes, trunks
 from .ai import elevenlabs
-from .voice import carriers, engine
+from .voice import audiosocket, carriers, engine
 
 log = logging.getLogger("crm.launcher")
 
@@ -49,7 +51,9 @@ async def place_ai_call(agent_id, number, contact=None, campaign_id=None, lead_i
             con.execute("UPDATE campaign_leads SET last_call_id = ?, attempts = attempts + 1 WHERE id = ?", (call_id, lead_id))
     variables = {**engine.contact_vars(contact), **(extra_vars or {})}
     try:
-        if agent["kind"] == "custom":
+        if agent["kind"] == "custom" and provider == "sip":
+            ext = place_sip_ai_call(call_id, agent_id, number, variables, cfg, s)
+        elif agent["kind"] == "custom":
             from_number = _caller_id(cfg, s, provider)
             token = engine.new_token({"call_id": call_id, "agent_id": agent_id, "vars": variables,
                                       "from_number": from_number})
@@ -74,6 +78,27 @@ async def place_ai_call(agent_id, number, contact=None, campaign_id=None, lead_i
     with db.tx() as con:
         con.execute("UPDATE calls SET external_id = ? WHERE id = ?", (ext, call_id))
     return call_id
+
+
+def place_sip_ai_call(call_id, agent_id, number, variables, cfg, settings):
+    """Through Asterisk and a trunk from Admin → SIP trunks (the agent's caller ID picks the trunk)."""
+    if not audiosocket.PORT:
+        raise net.ProviderError("AI over SIP trunks is not running (AudioSocket server) – see the CRM log")
+    with db.tx() as con:
+        t, caller = trunks.route(con, settings, {"caller_id": cfg.get("from_number", "")})
+    if not t:
+        raise net.ProviderError("No SIP trunk configured (Admin → SIP trunks)")
+    if not caller:
+        raise net.ProviderError("No caller ID for the SIP trunk (Admin → SIP trunks → Numbers)")
+    uid = str(uuid.uuid4())
+    engine.new_token({"call_id": call_id, "agent_id": agent_id, "vars": variables, "from_number": caller,
+                      "trunk_id": t["id"], "external_id": uid}, token=uid)
+    try:
+        audiosocket.originate(trunks.endpoint(t["id"]), trunks.dial_number(t, number), caller, call_id, uid)
+    except RuntimeError as e:
+        engine.PENDING.pop(uid, None)
+        raise net.ProviderError(str(e))
+    return uid
 
 
 async def place_voicemail(campaign_id, cfg, contact, lead_id):

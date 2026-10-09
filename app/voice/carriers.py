@@ -133,15 +133,22 @@ async def twilio_account():
 # --------------------------------------------------- carrier-neutral calls ----
 
 async def hangup(provider, external_id):
-    if provider == "telnyx":
+    if provider == "sip":
+        from . import audiosocket
+        audiosocket.hangup(external_id)
+    elif provider == "telnyx":
         await telnyx_action(external_id, "hangup")
     elif provider == "twilio":
         await twilio_update(external_id, Status="completed")
 
 
-async def transfer(provider, external_id, target, caller_id=""):
-    """target: +E164 number or sip: URI (e.g. a human agent queue)."""
-    if provider == "telnyx":
+async def transfer(provider, external_id, target, caller_id="", trunk_id=None):
+    """target: +E164 number or sip: URI (e.g. a human agent queue).
+    On SIP-trunk calls a sip: target rings the CRM's online agents."""
+    if provider == "sip":
+        from . import audiosocket
+        audiosocket.transfer(external_id, target, caller_id, trunk_id)
+    elif provider == "telnyx":
         body = {"to": target}
         if caller_id:
             body["from"] = caller_id

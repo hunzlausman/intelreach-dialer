@@ -1,7 +1,8 @@
 """Custom AI voice pipeline:  caller audio -> STT -> LLM (+tools) -> TTS -> caller.
 
 One VoiceSession per call. The carrier (Telnyx or Twilio) streams 8 kHz μ-law audio
-over a WebSocket (see voice/media.py); the session answers on the same socket.
+over a WebSocket (see voice/media.py); calls on your own SIP trunks come from Asterisk
+over AudioSocket (voice/audiosocket.py). The session answers on the same connection.
 
     STT  AssemblyAI or Deepgram streaming (turn detection built in) – ai/stt.py
     LLM  Claude / OpenAI / Gemini / any OpenAI-compatible model (app/ai/llm.py)
@@ -50,8 +51,8 @@ TOOLS = [
 ]
 
 
-def new_token(info):
-    token = secrets.token_urlsafe(24)
+def new_token(info, token=None):
+    token = token or secrets.token_urlsafe(24)
     info["created"] = time.time()
     PENDING[token] = info
     for t, v in list(PENDING.items()):          # forget tokens of calls that never connected
@@ -314,7 +315,7 @@ class VoiceSession:
         await self._drain()
         try:
             await carriers.transfer(self.transport.provider, self.transport.external_id, target,
-                                    self.info.get("from_number", ""))
+                                    self.info.get("from_number", ""), self.info.get("trunk_id"))
         except Exception as e:
             log.warning("transfer failed: %s", e)
             self.ending = False

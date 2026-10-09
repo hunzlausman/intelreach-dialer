@@ -462,3 +462,122 @@ def test_deepgram_speech_to_text(c, tmp_path):
     assert got == [("partial", "I want"), ("partial", "I want a demo"), ("partial", "I want a demo next"),
                    ("turn", "I want a demo next week."), ("partial", "Thanks"), ("turn", "Thanks")]
     c.put("/api/admin/settings", json={"stt_provider": "assemblyai", "live_captions": "0"})
+
+
+
+def test_ulaw_codec_round_trip():
+    from app.voice import audiosocket as a
+    every = bytes(i for i in range(256) if i != 0x7F)          # 0x7F is μ-law "-0" and comes back as 0xFF
+    assert a.pcm_to_ulaw(a.ulaw_to_pcm(every)) == every
+    assert a.ulaw_to_pcm(b"\xff") == b"\x00\x00" and a.pcm_to_ulaw(b"\x00\x00") == b"\xff"
+    assert a.pcm_to_ulaw((32767).to_bytes(2, "little", signed=True)) == b"\x80"
+
+
+def test_ai_agent_over_sip_trunk(c, monkeypatch):
+    """Custom AI agent on the SIP trunk: call file -> Asterisk (simulated) -> AudioSocket -> voice engine."""
+    import socket
+    import uuid as uuidlib
+    from app import config
+    from app.ai import assemblyai, elevenlabs
+    from app.voice import audiosocket
+
+    class FakeSTT:
+        def __init__(self, on_partial, on_turn, **kw):
+            self.on_turn, self.n = on_turn, 0
+
+        async def start(self):
+            pass
+
+        async def send(self, audio):
+            assert len(audio) == 160                           # 320 bytes of 16-bit audio -> 160 μ-law bytes
+            self.n += 1
+            if self.n == 3:
+                await self.on_turn("I'd like to talk to a person please.")
+
+        async def close(self):
+            pass
+
+    async def fake_llm(*a, **kw):
+        for ev in [("text", "Sure, connecting you now."), ("done", {"text": "Sure, connecting you now.", "raw": None,
+                   "tool_calls": [{"id": "1", "name": "transfer_to_human", "input": {"reason": "asked"}}]})]:
+            yield ev
+
+    async def fake_tts(text, voice, model="", fmt=""):
+        yield b"\xff" * 480
+
+    monkeypatch.setattr(assemblyai, "StreamingSTT", FakeSTT)
+    monkeypatch.setattr(llm, "stream_chat", fake_llm)
+    monkeypatch.setattr(elevenlabs, "tts_stream", fake_tts)
+
+    base = {"prompt": "Book demos.", "llm_provider": "custom_llm", "llm_model": "m1", "tts_provider": "elevenlabs",
+            "voice_id": "v1", "first_message": "Hi {{first_name}}!", "transfer_to": "sip:agents"}
+    assert c.post("/api/ai-agents", json={"name": "bad", "kind": "custom",
+                                          "config": {**base, "carrier": "sip", "tts_provider": "telnyx"}}).status_code == 400
+    aid = c.post("/api/ai-agents", json={"name": "SIP Sara", "kind": "custom", "config": {**base, "carrier": "sip"}}).json()["id"]
+    contacts(c, ("Sam Sip", "+12025550601", ""))
+
+    # outbound: the CRM writes an Asterisk call file for the default trunk with the trunk's caller ID
+    call_id = c.post(f"/api/ai-agents/{aid}/test-call", json={"number": "+12025550601"}).json()["call_id"]
+    cf = Path(config.AST_SPOOL) / f"crm-ai-{call_id}.call"
+    text = cf.read_text()
+    assert "Channel: PJSIP/+12025550601@crm-trunk-1\n" in text and "CallerID: <+15550001111>" in text
+    assert "Context: crm-ai\n" in text and f"Setvar: CRMID={call_id}\n" in text
+    uid = text.split("Setvar: AIUUID=")[1].split("\n")[0]
+    cf.unlink()
+
+    # Asterisk: answered -> AudioSocket with the uuid; the caller asks for a person -> transfer to the CRM agents
+    c.post("/api/me/heartbeat", json={"available": True})
+    assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id}).text == "ok|0"
+    got, kinds = b"", []
+    with socket.create_connection(("127.0.0.1", audiosocket.PORT), timeout=10) as sock:
+        sock.sendall(b"\x01\x00\x10" + uuidlib.UUID(uid).bytes)
+        for _ in range(4):
+            sock.sendall(b"\x10\x01\x40" + b"\x00" * 320)
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            got += chunk
+    while got:                                               # parse what the CRM sent back
+        kind, n = got[0], int.from_bytes(got[1:3], "big")
+        kinds.append((kind, n))
+        got = got[3 + n:]
+    assert kinds[0] == (0x10, 320) and kinds[-1] == (0x00, 0)    # audio frames (16-bit, 20 ms), then hang-up
+    assert c.get("/ast/ai-next", params={"s": "sek", "call": call_id}).text == "agents|PJSIP/2001|20"
+    assert c.get("/ast/ai-next", params={"s": "sek", "call": call_id}).text == "hangup|"
+    deadline = time.time() + 10
+    while time.time() < deadline and not c.get(f"/api/calls/{call_id}").json()["ended_at"]:
+        time.sleep(0.1)
+    k = c.get(f"/api/calls/{call_id}").json()
+    assert k["status"] == "answered" and k["provider"] == "sip"
+    roles = [t["role"] for t in k["transcript"]]
+    assert roles[:2] == ["agent", "contact"] and k["transcript"][0]["text"] == "Hi Sam!" and "system" in roles
+    assert c.get("/ast/ai-hangup", params={"s": "sek", "call": call_id, "answered": "9"}).text == "ok"
+
+    # a forged / unknown uuid never starts a session
+    with socket.create_connection(("127.0.0.1", audiosocket.PORT), timeout=5) as sock:
+        sock.sendall(b"\x01\x00\x10" + uuidlib.uuid4().bytes)
+        assert sock.recv(10) == b""
+
+    # not answered: the call file's "failed" extension reports busy
+    call2 = c.post(f"/api/ai-agents/{aid}/test-call", json={"number": "+12025550601"}).json()["call_id"]
+    assert c.get("/ast/ai-failed", params={"s": "sek", "call": call2, "reason": "5"}).text == "ok"
+    assert c.get(f"/api/calls/{call2}").json()["status"] == "busy"
+    assert not any(i["call_id"] == call2 for i in engine.PENDING.values())
+    (Path(config.AST_SPOOL) / f"crm-ai-{call2}.call").unlink()
+
+    # inbound: a trunk number answered by the AI agent (or after the agents)
+    assert c.post("/api/admin/numbers", json={"number": "+15550009999", "trunk_id": 2, "inbound": "ai"}).status_code == 400
+    n = c.post("/api/admin/numbers", json={"number": "+15550009999", "trunk_id": 2, "inbound": "ai",
+                                           "ai_agent_id": aid}).json()
+    r = c.get("/ast/inbound", params={"s": "sek", "did": "+15550009999", "src": "+12025550601"}).text
+    assert r.startswith("ai|Sam Sip|0|") and r.endswith("|1")
+    cid3 = r.split("|")[4]
+    ok, uid3 = c.get("/ast/ai-start", params={"s": "sek", "call": cid3}).text.split("|")
+    assert ok == "ok" and engine.PENDING[uid3]["agent_id"] == aid and engine.PENDING[uid3]["call_id"] == int(cid3)
+    engine.PENDING.pop(uid3)
+    c.put(f"/api/admin/numbers/{n['id']}", json={"number": "+15550009999", "trunk_id": 2, "inbound": "agents_then_ai",
+                                                  "ai_agent_id": aid})
+    r = c.get("/ast/inbound", params={"s": "sek", "did": "+15550009999", "src": "+12025550601"}).text
+    assert r.startswith("PJSIP/2001|Sam Sip|") and r.endswith("|1")
+    c.delete(f"/api/admin/numbers/{n['id']}")

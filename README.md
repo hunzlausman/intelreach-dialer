@@ -107,6 +107,12 @@ cd /opt/intelreach-crm && set -a && . /etc/intelreach-crm.env && set +a && \
    ID on its trunk; campaigns can choose a number (and with it, its provider). Pick the default trunk in
    **Admin → Settings**.
 5. **Admin → Twilio number** → enter the GHL number (`+1…`) → **Connect**.
+
+**AI agents on your SIP trunks:** create a *Custom* AI agent with **Phone carrier → Your SIP trunk**. Its calls
+go out through the trunk of its caller ID (or the default trunk); Asterisk hands the audio to the CRM's voice
+engine over AudioSocket (`127.0.0.1:8045`, `chan_audiosocket` – `install.sh` loads it). For incoming calls, set a
+number to *AI agent answers* or *Ring the CRM agents, then the AI agent*. A transfer target of `sip:agents` rings
+your online CRM agents. Telnyx Call Control / Twilio API carriers keep working for agents that use them.
    The CRM saves GHL's current webhook (shown as *GHL fallback*) and points the number at
    `https://dialer.intelreach.com/twilio/voice`.
 6. **Admin → Settings**: set the default country code, the allowed countries (e.g. `+1,+44,+92,+971` or `*`),

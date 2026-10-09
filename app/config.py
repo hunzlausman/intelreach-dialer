@@ -46,3 +46,7 @@ RUN_DIALER = env("CRM_RUN_DIALER", "1") == "1"
 # SIP trunks are set up in Admin → SIP trunks; the CRM writes pjsip_trunks.conf + trunk_ips.txt here
 # and the root unit intelreach-crm-trunks.path reloads Asterisk / the firewall when they change.
 TRUNKS_DIR = env("CRM_TRUNKS_DIR", "/etc/intelreach-crm/asterisk")
+# AI agents over the SIP trunks: Asterisk's AudioSocket connects here (127.0.0.1 only),
+# outbound AI calls are started with call files in Asterisk's spool
+AUDIOSOCKET_PORT = int(env("CRM_AUDIOSOCKET_PORT", "8045") or 8045)
+AST_SPOOL = env("CRM_AST_SPOOL", "/var/spool/asterisk/outgoing")

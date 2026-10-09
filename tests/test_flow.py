@@ -239,8 +239,8 @@ def test_second_vendor_trunk_and_numbers(c):
     for q in ({"did": "+14045550100"}, {"did": "14045550100"}, {"did": "123_crm", "to": "<sip:14045550100@1.2.3.4>;tag=x"},
               {"did": "123_crm", "trunk": "3"}):
         r = c.get("/ast/inbound", params={"s": "sek", "src": "+923001234567", **q}).text
-        target, name, ring, rec, cid = r.split("|")
-        assert target == "PJSIP/2001" and name == "Ali", q
+        target, name, ring, rec, cid, ai = r.split("|")
+        assert target == "PJSIP/2001" and name == "Ali" and ai == "0", q
         assert c.get(f"/api/calls/{cid}").json()["direction"] == "in"
         c.get("/ast/hangup", params={"s": "sek", "call": cid, "status": "NOANSWER"})
         assert c.get(f"/api/calls/{cid}").json()["status"] == "missed"

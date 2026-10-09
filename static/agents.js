@@ -56,7 +56,7 @@ async function lookup(what) {
 async function editAgent(a, done) {
   const isNew = !a;
   a = a || { name: '', kind: 'custom', config: { llm_provider: 'anthropic', llm_model: 'claude-opus-5-5', tts_provider: 'elevenlabs',
-    carrier: 'telnyx', language: 'en-US', max_minutes: 10, silence_seconds: 12, el_phone_type: 'sip_trunk',
+    carrier: 'sip', language: 'en-US', max_minutes: 10, silence_seconds: 12, el_phone_type: 'sip_trunk',
     first_message: 'Hi {{first_name}}, this is Ava from Acme. Do you have a minute?',
     prompt: 'You are Ava, a friendly sales assistant for Acme. Your goal is to find out whether {{first_name}} is interested in a demo, '
       + 'learn their budget and timeline, and book a callback with a human colleague if they are interested.' } };
@@ -86,9 +86,10 @@ async function editAgent(a, done) {
         <label>Language code <input name="language" value="${esc(c.language)}" placeholder="en-US"></label>
         <label>Speech-to-text <select name="stt_provider">${options([['', 'Default (Settings)'], ['assemblyai', 'AssemblyAI'],
           ['deepgram', 'Deepgram']], c.stt_provider)}</select></label>
-        <label>Phone carrier <select name="carrier">${options([['telnyx', 'Telnyx'], ['twilio', 'Twilio']], c.carrier)}</select></label>
-        <label>Caller ID (empty = default) <input name="from_number" value="${esc(c.from_number)}" placeholder="+15551234567"></label>
-        <label>Transfer hot leads to (+number or sip:) <input name="transfer_to" value="${esc(c.transfer_to)}"></label>
+        <label>Phone carrier <select name="carrier">${options([['sip', 'Your SIP trunk (Admin → SIP trunks)'],
+          ['telnyx', 'Telnyx Call Control API'], ['twilio', 'Twilio API']], c.carrier)}</select></label>
+        <label>Caller ID (empty = default; on SIP trunks the number also picks the trunk) <input name="from_number" value="${esc(c.from_number)}" placeholder="+15551234567"></label>
+        <label>Transfer hot leads to (+number, or sip:agents = your CRM agents on SIP-trunk calls) <input name="transfer_to" value="${esc(c.transfer_to)}" placeholder="sip:agents"></label>
         <label>Longest call (minutes) <input name="max_minutes" type="number" min="1" value="${esc(c.max_minutes)}"></label>
         <label>Hang up after silence (seconds) <input name="silence_seconds" type="number" min="4" value="${esc(c.silence_seconds)}"></label>
       </div>

@@ -40,7 +40,7 @@ VENDORS = {
     "custom":     {"label": "Other SIP provider", "host": "", "register": False,
                    "help": "Any SIP trunk that takes username/password or IP authentication over UDP."},
 }
-INBOUND = {"agents", "reject"}
+INBOUND = {"agents", "agents_then_ai", "ai", "reject"}
 DIAL_FORMATS = {"e164", "digits"}
 FIELDS = ("name", "vendor", "host", "port", "username", "password", "from_user", "from_domain", "register",
           "inbound_ips", "dial_format", "enabled")
@@ -131,9 +131,16 @@ def clean_number(con, body):
         trunk_id = int(trunk_id)
     inbound = body.get("inbound") or "agents"
     if inbound not in INBOUND:
-        raise HTTPException(400, "Incoming must be agents or reject")
+        raise HTTPException(400, "Incoming must be agents, agents_then_ai, ai or reject")
+    ai_agent_id = None
+    if inbound in ("ai", "agents_then_ai"):
+        a = con.execute("SELECT id, kind FROM ai_agents WHERE id = ?", (int(body["ai_agent_id"]),)).fetchone() \
+            if str(body.get("ai_agent_id") or "").isdigit() else None
+        if not a or a["kind"] != "custom":
+            raise HTTPException(400, "Choose a Custom AI agent to answer this number")
+        ai_agent_id = a["id"]
     label = re.sub(r"[\x00-\x1f\x7f]", "", str(body.get("label") or "")).strip()[:60]
-    return {"number": num, "label": label, "trunk_id": trunk_id, "inbound": inbound}
+    return {"number": num, "label": label, "trunk_id": trunk_id, "inbound": inbound, "ai_agent_id": ai_agent_id}
 
 
 # ------------------------------------------------------------- routing ----

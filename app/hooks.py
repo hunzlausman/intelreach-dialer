@@ -237,26 +237,137 @@ def online_agents(con, now):
 
 @router.get("/ast/inbound", response_class=PlainTextResponse)
 def ast_inbound(request: Request, s: str = "", trunk: str = "", did: str = "", to: str = "", src: str = ""):
-    """Call arriving over a SIP trunk. Answer: <dial string>|<caller name>|<ring seconds>|<record>|<call id> or none|."""
+    """Call arriving over a SIP trunk. Answer:
+    <dial string>|<caller name>|<ring seconds>|<record>|<call id>|<AI if nobody answers 0/1>
+    ai|<caller name>|0|<record>|<call id>|1   (the AI agent answers: dialplan -> /ast/ai-start)
+    none|"""
     ast_guard(request, s)
     now = int(time.time())
     with db.tx() as con:
         st = db.get_settings(con)
         n = trunks.inbound_number(con, trunk, [did, to], st["default_country"])
-        if not n or n["inbound"] != "agents":     # not one of our numbers (or set to reject)
+        if not n or n["inbound"] not in ("agents", "agents_then_ai", "ai"):  # not one of ours, or set to reject
             return "none|"
+        ai_after = n["inbound"] in ("agents_then_ai", "ai") and n["ai_agent_id"]
         number = phone.normalize(src, st["default_country"]) or clean_name(src) or "unknown"
         c = find_contact(con, number)
-        call_id = con.execute("INSERT INTO calls(direction, number, contact_id, status) VALUES ('in', ?, ?, 'ringing')",
-                              (number, c["id"] if c else None)).lastrowid
-        agents = online_agents(con, now)
-        if not agents:
+        call_id = con.execute("INSERT INTO calls(direction, number, contact_id, status, ai_agent_id) "
+                              "VALUES ('in', ?, ?, 'ringing', ?)",
+                              (number, c["id"] if c else None, n["ai_agent_id"] if ai_after else None)).lastrowid
+        agents = online_agents(con, now) if n["inbound"] != "ai" else []
+        if not agents and not ai_after:
             con.execute("UPDATE calls SET status='no-agents', ended_at=? WHERE id=?", (now, call_id))
             return "none|"
     name = clean_name(c["name"] if c and c["name"] else number)
     ring = max(5, min(int(st.get("ring_timeout") or 20), 120))
     rec = "1" if st.get("record_calls") == "1" else "0"
-    return "&".join(f"PJSIP/{a['sip_ext']}" for a in agents) + f"|{name}|{ring}|{rec}|{call_id}"
+    if not agents:
+        return f"ai|{name}|0|{rec}|{call_id}|1"
+    return "&".join(f"PJSIP/{a['sip_ext']}" for a in agents) + f"|{name}|{ring}|{rec}|{call_id}|{1 if ai_after else 0}"
+
+
+# ------------------------------------------------- AI agents on SIP trunks ----
+# Dialplan context crm-ai (extensions_crm.conf) + voice/audiosocket.py
+
+AI_FAILED = {"3": "no-answer", "5": "busy", "1": "no-answer", "8": "failed", "0": "failed"}
+
+
+@router.get("/ast/ai-start", response_class=PlainTextResponse)
+def ast_ai_start(request: Request, s: str = "", call: str = ""):
+    """Incoming trunk call goes to its number's AI agent. Answer: ok|<audiosocket uuid> or none|."""
+    import uuid
+    from .voice import audiosocket, engine
+    ast_guard(request, s)
+    with db.tx() as con:
+        row = con.execute("SELECT * FROM calls WHERE id = ? AND direction = 'in' AND ended_at IS NULL AND ai_agent_id IS NOT NULL",
+                          (int(call) if call.isdigit() else 0,)).fetchone()
+        if not row or not audiosocket.PORT:
+            return "none|"
+        a = con.execute("SELECT kind FROM ai_agents WHERE id = ?", (row["ai_agent_id"],)).fetchone()
+        if not a or a["kind"] != "custom":
+            return "none|"
+        st = db.get_settings(con)
+        t, caller = trunks.route(con, st)
+        c = db.row(con.execute("SELECT * FROM contacts WHERE id = ?", (row["contact_id"],)).fetchone()) \
+            if row["contact_id"] else None
+        uid = str(uuid.uuid4())
+        con.execute("UPDATE calls SET provider = 'sip', external_id = ? WHERE id = ?", (uid, row["id"]))
+    engine.new_token({"call_id": row["id"], "agent_id": row["ai_agent_id"], "external_id": uid,
+                      "vars": engine.contact_vars(c or {"phone": row["number"]}), "from_number": caller,
+                      "trunk_id": t["id"] if t else None}, token=uid)
+    return f"ok|{uid}"
+
+
+@router.get("/ast/ai-answer", response_class=PlainTextResponse)
+def ast_ai_answer(request: Request, s: str = "", call: str = ""):
+    """The AI call is answered (outbound) or picked up by the AI (inbound). Answer: ok|<record 0/1> or none|."""
+    ast_guard(request, s)
+    with db.tx() as con:
+        row = con.execute("SELECT * FROM calls WHERE id = ? AND ended_at IS NULL", (int(call) if call.isdigit() else 0,)).fetchone()
+        if not row or not row["ai_agent_id"]:
+            return "none|"
+        con.execute("UPDATE calls SET status = 'answered' WHERE id = ?", (row["id"],))
+        a = con.execute("SELECT config FROM ai_agents WHERE id = ?", (row["ai_agent_id"],)).fetchone()
+    rec = "1" if a and db.jload(a["config"]).get("record") else "0"
+    return f"ok|{rec}"
+
+
+@router.get("/ast/ai-next", response_class=PlainTextResponse)
+def ast_ai_next(request: Request, s: str = "", call: str = ""):
+    """After the AI leg ended: dial|<dial string>|<caller id>, agents|<dial string>|<ring seconds> or hangup|."""
+    from .voice import audiosocket
+    ast_guard(request, s)
+    nxt = audiosocket.NEXT.pop(int(call) if call.isdigit() else 0, None)
+    if not nxt:
+        return "hangup|"
+    target = nxt["target"]
+    with db.tx() as con:
+        st = db.get_settings(con)
+        if phone.E164.match(target):
+            t = trunks.find(con, nxt.get("trunk_id")) or trunks.route(con, st)[0]
+            if not t or phone.check_allowed(target, st):
+                return "hangup|"
+            return f"dial|PJSIP/{trunks.dial_number(t, target)}@{trunks.endpoint(t['id'])}|{nxt.get('caller_id', '')}"
+        agents = online_agents(con, int(time.time()))      # sip:… on a SIP-trunk call = the CRM's agents
+    if not agents:
+        return "hangup|"
+    ring = max(5, min(int(st.get("ring_timeout") or 20), 120))
+    return "agents|" + "&".join(f"PJSIP/{a['sip_ext']}" for a in agents) + f"|{ring}"
+
+
+@router.get("/ast/ai-failed", response_class=PlainTextResponse)
+def ast_ai_failed(request: Request, s: str = "", call: str = "", reason: str = ""):
+    """Outbound AI call was not answered (call file 'failed' extension; REASON 3 = no answer, 5 = busy …)."""
+    from .voice import engine
+    ast_guard(request, s)
+    if not call.isdigit():
+        return "ignored"
+    for token, info in list(engine.PENDING.items()):
+        if info.get("call_id") == int(call):
+            engine.PENDING.pop(token, None)
+    outcomes.finish_call(int(call), AI_FAILED.get(reason, "failed"), cause=f"reason {reason}"[:20])
+    return "ok"
+
+
+@router.get("/ast/ai-hangup", response_class=PlainTextResponse)
+def ast_ai_hangup(request: Request, s: str = "", call: str = "", answered: str = ""):
+    """Hangup handler of AI calls: closes calls whose AI leg never connected; attaches the recording."""
+    from .voice import audiosocket
+    ast_guard(request, s)
+    if not call.isdigit():
+        return "ignored"
+    rec = os.path.join(config.RECORDINGS_DIR, f"{int(call)}.wav")
+    with db.tx() as con:
+        row = con.execute("SELECT status, ended_at FROM calls WHERE id = ?", (int(call),)).fetchone()
+        if os.path.exists(rec):
+            con.execute("UPDATE calls SET recording = ? WHERE id = ?", (rec, int(call)))
+    if row and not row["ended_at"] and not audiosocket.active(int(call)):
+        try:
+            secs = int(float(answered or 0))
+        except ValueError:
+            secs = 0
+        outcomes.finish_call(int(call), "answered" if row["status"] == "answered" else "failed", secs)
+    return "ok"
 
 
 @router.get("/ast/hangup", response_class=PlainTextResponse)

@@ -43,8 +43,10 @@ def clean_agent(kind, cfg):
             raise HTTPException(400, "Unknown LLM provider")
         if cfg.get("stt_provider") and cfg["stt_provider"] not in stt.PROVIDERS:
             raise HTTPException(400, "Speech-to-text must be assemblyai or deepgram")
-        if cfg.get("carrier", "telnyx") not in ("telnyx", "twilio"):
-            raise HTTPException(400, "Carrier must be telnyx or twilio")
+        if cfg.get("carrier", "telnyx") not in ("telnyx", "twilio", "sip"):
+            raise HTTPException(400, "Carrier must be telnyx, twilio or sip")
+        if cfg.get("carrier") == "sip" and cfg.get("tts_provider") == "telnyx":
+            raise HTTPException(400, "Telnyx voices only work on Telnyx Call Control calls – choose ElevenLabs")
         if not cfg.get("prompt"):
             raise HTTPException(400, "Write the agent's instructions (prompt)")
         fields = cfg.get("fields") or []

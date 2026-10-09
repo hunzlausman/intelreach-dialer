@@ -2,10 +2,13 @@
 captions, and transcripts of recorded calls (same interface as assemblyai.py)."""
 import asyncio
 import json
+import logging
 import mimetypes
 import urllib.parse
 
 from .. import net, vault
+
+log = logging.getLogger("crm.deepgram")
 
 API = "https://api.deepgram.com/v1"
 STREAM_URL = "wss://api.deepgram.com/v1/listen"
@@ -122,9 +125,15 @@ class StreamingSTT:
             async for msg in self.ws:
                 if isinstance(msg, bytes):
                     continue
-                await self.turns.handle(json.loads(msg))
-        except Exception:
-            pass
+                data = json.loads(msg)
+                if data.get("type") == "Error" or data.get("err_code"):
+                    log.warning("Deepgram: %s", msg[:300])
+                await self.turns.handle(data)
+            log.info("Deepgram stream closed: %s %s", getattr(self.ws, "close_code", ""), getattr(self.ws, "close_reason", ""))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("Deepgram stream error: %s", e)
 
     async def close(self):
         if self.ws:

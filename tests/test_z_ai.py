@@ -634,3 +634,14 @@ def test_stt_uses_the_provider_that_has_a_key(c, monkeypatch):
     assert stt.provider() == "deepgram" and stt.missing() == ""
     keys.clear()
     assert "Speech-to-text API key missing" in stt.missing()
+
+
+
+def test_llm_falls_back_to_a_provider_with_a_key(monkeypatch):
+    from app.ai import llm as llm_mod
+    cfgs = {"gemini": {"api_key": "g"}}
+    monkeypatch.setattr(vault, "load", lambda p: cfgs.get(p, {}))
+    assert llm_mod.resolve("anthropic", "claude-opus-5-5") == ("gemini", "")
+    assert llm_mod.resolve("gemini", "gemini-x") == ("gemini", "gemini-x")
+    cfgs.clear()
+    assert llm_mod.resolve("anthropic", "m") == ("anthropic", "m")       # nothing set: the original error shows

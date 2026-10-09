@@ -37,8 +37,25 @@ class LLMError(Exception):
 
 # ------------------------------------------------------------- public API ----
 
+def _ready(provider):
+    cfg = vault.load(provider)
+    return bool(cfg.get("base_url")) if provider == "custom_llm" else bool(cfg.get("api_key"))
+
+
+def resolve(provider, model):
+    """The chosen LLM – or, if it has no key, the first one that has (e.g. only a Gemini key is set while
+    an agent or Settings still say Anthropic). The model is then that provider's default."""
+    if provider in DEFAULT_MODELS and _ready(provider):
+        return provider, model
+    for p in ("gemini", "anthropic", "openai", "custom_llm"):
+        if _ready(p):
+            return p, model if p == provider else ""
+    return provider, model
+
+
 async def stream_chat(provider, model, system, history, tools=None, effort="low", max_tokens=2048):
     """Yields ("text", chunk) while generating, then ("done", {"text", "tool_calls", "raw"})."""
+    provider, model = resolve(provider, model)
     model = model or DEFAULT_MODELS.get(provider, "")
     if provider == "anthropic":
         async for ev in _anthropic_stream(model, system, history, tools or [], effort, max_tokens):

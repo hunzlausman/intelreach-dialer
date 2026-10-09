@@ -166,6 +166,7 @@ class VoiceSession:
             await self.interrupt()
 
     async def _on_turn(self, text):
+        log.info("AI call %s – caller said: %s", self.call_id, text[:200])
         self.last_activity = time.time()
         self.nudged = False
         if self.ending:

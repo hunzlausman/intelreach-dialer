@@ -110,7 +110,7 @@ async def _read(reader, timeout=None):
 
 
 async def _handle(reader, writer):
-    session, uid, t = None, None, None
+    session, uid, t, frames = None, None, None, 0
     try:
         kind, payload = await _read(reader, timeout=5)
         if kind != KIND_UUID or len(payload) != 16:
@@ -122,11 +122,13 @@ async def _handle(reader, writer):
             return
         t = Transport(writer, uid, info["call_id"])
         CONNS[uid] = t
+        log.info("AI call %s connected (AudioSocket %s)", info["call_id"], uid)
         session = engine.VoiceSession(info, t)
         await session.start()
         while True:
             kind, payload = await _read(reader)
             if kind == KIND_AUDIO and payload:
+                frames += 1
                 await session.feed(pcm_to_ulaw(payload))
             elif kind in (KIND_HANGUP, KIND_ERROR):
                 break
@@ -135,6 +137,8 @@ async def _handle(reader, writer):
     except Exception as e:
         log.warning("AudioSocket error: %s", e)
     finally:
+        if t is not None:
+            log.info("AI call %s ended – %s audio frames (%.1f s) received from the caller", t.call_id, frames, frames * 0.02)
         if t is not None and CONNS.get(uid) is t:       # a refused duplicate must not drop the live call's entry
             CONNS.pop(uid, None)
         if session:

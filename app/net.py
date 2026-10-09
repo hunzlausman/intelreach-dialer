@@ -18,7 +18,14 @@ def check(r, who):
     if r.status_code >= 400:
         try:
             body = r.json()
-            msg = (body.get("detail") or body.get("message") or body.get("errors") or body.get("error") or body)
+            if isinstance(body, list) and body:          # Gemini wraps errors: [{"error": {...}}]
+                body = body[0]
+            if isinstance(body, dict):
+                err = body.get("error")
+                msg = (body.get("detail") or body.get("message") or body.get("errors")
+                       or (err.get("message") or err.get("status") if isinstance(err, dict) else err) or body)
+            else:
+                msg = body
         except ValueError:
             msg = r.text[:300]
         raise ProviderError(f"{who} {r.status_code}: {str(msg)[:300]}")

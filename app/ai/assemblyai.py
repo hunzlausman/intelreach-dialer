@@ -45,6 +45,7 @@ class StreamingSTT:
         self.ws = None
         self.buf = bytearray()
         self.reader = None
+        self.send_failed = False
 
     async def start(self):
         import websockets
@@ -62,8 +63,10 @@ class StreamingSTT:
             chunk, self.buf = bytes(self.buf), bytearray()
             try:
                 await self.ws.send(chunk)
-            except Exception:
-                pass
+            except Exception as e:
+                if not self.send_failed:
+                    log.warning("AssemblyAI: sending audio failed: %s", e)
+                self.send_failed = True
 
     async def _read(self):
         try:
@@ -73,6 +76,8 @@ class StreamingSTT:
                 data = json.loads(msg)
                 if data.get("type") == "Error" or data.get("error"):
                     log.warning("AssemblyAI: %s", msg[:300])
+                elif data.get("type") == "Begin":
+                    log.info("AssemblyAI session started (%s)", data.get("id", ""))
                 if data.get("type") != "Turn":
                     continue
                 text = (data.get("transcript") or "").strip()

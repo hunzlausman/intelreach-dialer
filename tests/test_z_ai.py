@@ -653,3 +653,26 @@ def test_llm_falls_back_to_a_provider_with_a_key(monkeypatch):
     assert llm_mod.resolve("gemini", "gemini-x") == ("gemini", "gemini-x")
     cfgs.clear()
     assert llm_mod.resolve("anthropic", "m") == ("anthropic", "m")       # nothing set: the original error shows
+
+
+def test_gemini_list_error_and_retry(c, monkeypatch):
+    """Gemini wraps errors in a list; rate limits (429) are retried before the call hears an apology."""
+    import httpx2
+    from app import net as net_mod
+    r = httpx2.Response(429, json=[{"error": {"code": 429, "message": "Resource has been exhausted", "status": "RESOURCE_EXHAUSTED"}}])
+    try:
+        net_mod.check(r, "gemini")
+        assert False
+    except net_mod.ProviderError as e:
+        assert "Resource has been exhausted" in str(e)
+    hits = []
+
+    def flaky(request):
+        hits.append(1)
+        if len(hits) == 1:
+            return httpx2.Response(429, json=[{"error": {"message": "slow down"}}], headers={"retry-after": "0"})
+        sse = 'data: {"choices": [{"delta": {"content": "Hi!"}}]}\n\ndata: [DONE]\n\n'
+        return httpx2.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(net_mod, "transport", httpx2.MockTransport(flaky))
+    text = run(llm.complete("custom_llm", "m1", "sys", "hello", max_tokens=10))
+    assert text == "Hi!" and len(hits) == 2

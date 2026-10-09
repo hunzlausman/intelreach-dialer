@@ -120,12 +120,15 @@ class VoiceSession:
         self.tag = f"[AI call {self.call_id}]"
         self.audio_frames, self.audio_peak, self.audio_logged = 0, 0, 0.0
         self.last_partial, self.last_partial_at = "", 0.0
+        self.stt_q = asyncio.Queue(maxsize=500)       # caller audio -> STT (10 s); the carrier never waits for the STT
+        self.stt_dropped = 0
 
     # ------------------------------------------------------------ lifecycle
     async def start(self):
         LIVE[self.transport.external_id] = self
         self.tasks.append(asyncio.create_task(self._player()))
         self.tasks.append(asyncio.create_task(self._watchdog()))
+        self.tasks.append(asyncio.create_task(self._stt_sender()))
         prov, model = llm.resolve(self.cfg.get("llm_provider", "anthropic"), self.cfg.get("llm_model", ""))
         log.info("%s start – STT %s (language %s) · LLM %s %s · TTS %s voice %s", self.tag,
                  stt.provider(self.cfg.get("stt_provider", "")), self.cfg.get("language") or "auto", prov,
@@ -162,8 +165,29 @@ class VoiceSession:
                      self.audio_frames * len(audio) / 8000, self.audio_peak,
                      " – silence only" if self.audio_peak < 8 else "")
             self.audio_logged, self.audio_peak = now, 0
-        if self.stt:
-            await self.stt.send(audio)
+        try:
+            self.stt_q.put_nowait(audio)
+        except asyncio.QueueFull:
+            self.stt_dropped += 1
+            if self.stt_dropped in (1, 250, 2500):
+                log.warning("%s STT is not taking audio – %d frames dropped (see the STT lines above)", self.tag,
+                            self.stt_dropped)
+
+    async def _stt_sender(self):
+        """Hands caller audio to the STT on its own, so a slow / stuck STT connection never blocks the call."""
+        while True:
+            audio = await self.stt_q.get()
+            if not self.stt:
+                continue
+            t0 = time.time()
+            try:
+                await asyncio.wait_for(self.stt.send(audio), 5)
+            except asyncio.TimeoutError:
+                log.warning("%s STT send stalled for 5 s – the STT connection is not accepting audio", self.tag)
+            except Exception as e:
+                log.warning("%s STT send failed: %s", self.tag, e)
+            if time.time() - t0 > 1:
+                log.warning("%s STT send took %.1f s", self.tag, time.time() - t0)
 
     async def close(self):
         if self.closed:

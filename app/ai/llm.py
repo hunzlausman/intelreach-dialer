@@ -12,10 +12,15 @@ Conversation history is provider-neutral:
 "raw" keeps Claude's own content blocks (thinking, tool_use) so they are sent back unchanged.
 Tools are {"name", "description", "parameters": <JSON schema>}.
 """
+import asyncio
 import json
+import logging
 import re
+from contextlib import asynccontextmanager
 
 from .. import net, vault
+
+log = logging.getLogger("crm.llm")
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5-5",
@@ -195,6 +200,29 @@ def _openai_target(provider):
     return base, cfg.get("api_key", "")
 
 
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+@asynccontextmanager
+async def _post_with_retry(c, url, body, headers, provider, tries=3):
+    """Rate limits / overloaded models (common on Gemini's free tier) are retried briefly before giving up –
+    a live call would otherwise hear "could you say that again?"."""
+    for attempt in range(tries):
+        async with c.stream("POST", url, json=body, headers=headers) as r:
+            if r.status_code < 400:
+                yield r
+                return
+            await r.aread()
+            if r.status_code not in RETRY_STATUS or attempt == tries - 1:
+                net.check(r, provider)
+            try:
+                wait = min(float(r.headers.get("retry-after", "")), 3.0)
+            except ValueError:
+                wait = 0.7 * (attempt + 1)
+        log.info("%s %s – retrying in %.1f s", provider, r.status_code, wait)
+        await asyncio.sleep(wait)
+
+
 async def _openai_stream(provider, model, system, history, tools, max_tokens):
     base, key = _openai_target(provider)
     body = {"model": model, "messages": to_openai(system, history), "stream": True, "max_tokens": max_tokens}
@@ -204,10 +232,7 @@ async def _openai_stream(provider, model, system, history, tools, max_tokens):
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     text, calls = "", {}
     async with net.client(timeout=120) as c:
-        async with c.stream("POST", f"{base}/chat/completions", json=body, headers=headers) as r:
-            if r.status_code >= 400:
-                await r.aread()
-                net.check(r, provider)
+        async with _post_with_retry(c, f"{base}/chat/completions", body, headers, provider) as r:
             async for line in r.aiter_lines():
                 if not line.startswith("data:"):
                     continue

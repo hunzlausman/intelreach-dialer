@@ -100,7 +100,12 @@ async def complete_json(provider, model, system, prompt, effort="medium"):
 def to_anthropic(history):
     msgs = []
     for h in history:
+        if h["role"] == "assistant" and not msgs:                  # Claude wants a user turn first
+            msgs.append({"role": "user", "content": CALL_START})
         if h["role"] == "user":
+            if msgs and msgs[-1]["role"] == "user" and isinstance(msgs[-1]["content"], str):
+                msgs[-1]["content"] += "\n" + h["text"]
+                continue
             msgs.append({"role": "user", "content": h["text"]})
         elif h["role"] == "assistant":
             if h.get("raw"):
@@ -176,20 +181,37 @@ async def _anthropic_stream(model, system, history, tools, effort, max_tokens):
 
 # ------------------------------------------------------ OpenAI-compatible ----
 
+CALL_START = "(The phone call has connected.)"
+
+
 def to_openai(system, history):
+    """OpenAI chat format, shaped so strict back-ends accept it too (Claude on Bedrock via the AssemblyAI
+    gateway, …): starts with a user turn, no two user / two plain assistant turns in a row, no empty messages."""
     msgs = [{"role": "system", "content": system}] if system else []
     for h in history:
         if h["role"] == "user":
-            msgs.append({"role": "user", "content": h["text"]})
+            if msgs and msgs[-1]["role"] == "user" and isinstance(msgs[-1]["content"], str):
+                msgs[-1]["content"] += "\n" + h["text"]          # e.g. after a failed reply
+            else:
+                msgs.append({"role": "user", "content": h["text"]})
         elif h["role"] == "assistant":
-            m = {"role": "assistant", "content": h.get("text") or None}
-            if h.get("tool_calls"):
+            calls = h.get("tool_calls") or []
+            if not h.get("text") and not calls:
+                continue
+            if len(msgs) == (1 if system else 0):                  # the agent spoke first (greeting)
+                msgs.append({"role": "user", "content": CALL_START})
+            if not calls and msgs[-1]["role"] == "assistant" and not msgs[-1].get("tool_calls"):
+                msgs[-1]["content"] = (msgs[-1]["content"] or "") + " " + h["text"]
+                continue
+            m = {"role": "assistant", "content": h.get("text") or None}       # null (not "") beside tool calls
+            if calls:
                 m["tool_calls"] = [{"id": c["id"], "type": "function",
                                     "function": {"name": c["name"], "arguments": json.dumps(c["input"])}}
-                                   for c in h["tool_calls"]]
+                                   for c in calls]
             msgs.append(m)
         elif h["role"] == "tool":
-            msgs.append({"role": "tool", "tool_call_id": h["id"], "content": h["result"]})
+            result = h["result"] if isinstance(h["result"], str) else json.dumps(h["result"], ensure_ascii=False)
+            msgs.append({"role": "tool", "tool_call_id": h["id"], "content": result or "ok"})
     return msgs
 
 
@@ -249,6 +271,9 @@ async def _openai_stream(provider, model, system, history, tools, max_tokens, re
                 yield ev
             return
         except net.ProviderError as e:
+            if not started and f"{provider} 400" in str(e):
+                log.warning("%s %s refused the request (%s) – message roles: %s, %d tools", provider, model, e,
+                            " ".join(m["role"] for m in to_openai(system, history)), len(tools or []))
             if value and not started and f"{provider} 400" in str(e):
                 NO_REASONING_PARAM.add((provider, model, value))
                 log.info("%s %s does not take reasoning_effort=%s – sending without it", provider, model, value)

@@ -728,3 +728,19 @@ def test_realtime_calls_turn_llm_thinking_off(c, monkeypatch):
     run(collect("assemblyai", "picky-model", True))
     assert seen == ["none", None, None]                  # refused once, then remembered
     assert "min_turn_silence=160" in assemblyai.StreamingSTT(None, None).url
+
+
+
+def test_history_shape_for_strict_llms():
+    """Greeting first and repeated user turns (after a failed reply) are reshaped for Claude-on-Bedrock style APIs."""
+    hist = [{"role": "assistant", "text": "Hi Sam!"}, {"role": "user", "text": "Who is this?"},
+            {"role": "user", "text": "Hello?"},
+            {"role": "assistant", "text": "", "tool_calls": [{"id": "t1", "name": "save_lead_info", "input": {"x": 1}}]},
+            {"role": "tool", "id": "t1", "name": "save_lead_info", "result": {"ok": True}},
+            {"role": "assistant", "text": "Sara from Acme."}]
+    msgs = llm.to_openai("sys", hist)
+    assert [m["role"] for m in msgs] == ["system", "user", "assistant", "user", "assistant", "tool", "assistant"]
+    assert msgs[1]["content"] == llm.CALL_START and msgs[3]["content"] == "Who is this?\nHello?"
+    assert msgs[4]["content"] is None and msgs[5]["content"] == '{"ok": true}'
+    a = llm.to_anthropic(hist)
+    assert a[0] == {"role": "user", "content": llm.CALL_START} and a[2]["content"] == "Who is this?\nHello?"

@@ -26,6 +26,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-opus-5-5",
     "openai": "gpt-4.1-mini",
     "gemini": "gemini-2.5-flash",
+    "assemblyai": "gemini-2.5-flash",      # AssemblyAI LLM Gateway – Claude, GPT, Gemini … with the AssemblyAI key
     "custom_llm": "",
 }
 # Claude models that accept server-side refusal fallbacks ("default" routing)
@@ -33,6 +34,7 @@ CLAUDE_FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5"
 OPENAI_BASES = {
     "openai": "https://api.openai.com/v1",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "assemblyai": "https://llm-gateway.assemblyai.com/v1",      # OpenAI-compatible; key sent without "Bearer"
 }
 
 
@@ -52,7 +54,7 @@ def resolve(provider, model):
     an agent or Settings still say Anthropic). The model is then that provider's default."""
     if provider in DEFAULT_MODELS and _ready(provider):
         return provider, model
-    for p in ("gemini", "anthropic", "openai", "custom_llm"):
+    for p in ("gemini", "assemblyai", "anthropic", "openai", "custom_llm"):
         if _ready(p):
             return p, model if p == provider else ""
     return provider, model
@@ -65,7 +67,7 @@ async def stream_chat(provider, model, system, history, tools=None, effort="low"
     if provider == "anthropic":
         async for ev in _anthropic_stream(model, system, history, tools or [], effort, max_tokens):
             yield ev
-    elif provider in ("openai", "gemini", "custom_llm"):
+    elif provider in ("openai", "gemini", "assemblyai", "custom_llm"):
         async for ev in _openai_stream(provider, model, system, history, tools or [], max_tokens):
             yield ev
     else:
@@ -229,7 +231,7 @@ async def _openai_stream(provider, model, system, history, tools, max_tokens):
     if tools:
         body["tools"] = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
                                                            "parameters": t["parameters"]}} for t in tools]
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    headers = {"Authorization": key if provider == "assemblyai" else f"Bearer {key}"} if key else {}
     text, calls = "", {}
     async with net.client(timeout=120) as c:
         async with _post_with_retry(c, f"{base}/chat/completions", body, headers, provider) as r:

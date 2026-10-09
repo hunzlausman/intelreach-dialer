@@ -147,6 +147,16 @@ def save_integration(provider: str, body: dict, user=Depends(require_admin)):
 @router.post("/admin/integrations/{provider}/test")
 async def test_integration(provider: str, body: dict = None, user=Depends(require_admin)):
     try:
+        if provider == "assemblyai":           # speech-to-text key; the same key runs the LLM Gateway
+            await assemblyai.browser_token(60)
+            model = (body or {}).get("model") or llm.DEFAULT_MODELS["assemblyai"]
+            try:
+                text = await llm.complete("assemblyai", model, "Reply with the single word OK.", "Test",
+                                          effort="low", max_tokens=256)
+                gw = f"LLM Gateway {model}: {text.strip()[:40]}"
+            except (net.ProviderError, llm.LLMError) as e:
+                gw = f"LLM Gateway not usable: {e}"
+            return {"ok": True, "message": f"Speech-to-text OK · {gw}"}
         if provider in llm.DEFAULT_MODELS:
             model = (body or {}).get("model") or llm.DEFAULT_MODELS[provider]
             text = await llm.complete(provider, model, "Reply with the single word OK.", "Test", effort="low", max_tokens=256)

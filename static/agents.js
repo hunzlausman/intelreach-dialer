@@ -3,9 +3,11 @@ import { $, api, closeModal, esc, fail, modal, options, toast } from './core.js'
 
 const KINDS = [['custom', 'Custom – works on your SIP trunk (Deepgram/AssemblyAI → LLM → ElevenLabs)'],
   ['elevenlabs', 'ElevenLabs agent (runs in ElevenLabs)'], ['telnyx', 'Telnyx AI Assistant (needs the Telnyx API)']];
-const LLMS = [['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'], ['gemini', 'Google Gemini'], ['custom_llm', 'OpenAI-compatible']];
+const LLMS = [['assemblyai', 'AssemblyAI LLM Gateway (Claude, GPT, Gemini…)'], ['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'],
+  ['gemini', 'Google Gemini'], ['custom_llm', 'OpenAI-compatible']];
 const MODEL_HINT = { anthropic: 'claude-opus-5-5 (or claude-sonnet-5-5, claude-haiku-5-5)', openai: 'e.g. gpt-4.1-mini',
-  gemini: 'e.g. gemini-2.5-flash', custom_llm: 'model name at your provider' };
+  gemini: 'e.g. gemini-2.5-flash', custom_llm: 'model name at your provider',
+  assemblyai: 'gemini-2.5-flash (or claude-haiku-4-5-20251001, gpt-5-mini …)' };
 
 export async function viewAgents(el, ctx) {
   el.innerHTML = `<div class="toolbar"><h2 style="margin:0;flex:1">AI agents</h2><button class="btn primary" id="newAgent">+ AI agent</button></div>

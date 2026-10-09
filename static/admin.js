@@ -218,7 +218,7 @@ async function loadSettings(p) {
       ${chk('live_captions', 'Live captions + AI tips for agents during calls')}
       ${chk('analyze_calls', 'AI summary, outcome, sentiment and lead score after every call')}
       <div class="grid2" style="margin-top:8px">
-        <label>LLM for summaries and tips <select name="analysis_llm">${options([['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'],
+        <label>LLM for summaries and tips <select name="analysis_llm">${options([['assemblyai', 'AssemblyAI LLM Gateway'], ['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'],
           ['gemini', 'Google Gemini'], ['custom_llm', 'OpenAI-compatible']], s.analysis_llm)}</select></label>
         <label>Model <input name="analysis_model" value="${esc(s.analysis_model)}" placeholder="claude-opus-5-5"></label>
       </div></div>
@@ -241,7 +241,7 @@ const HELP = {
   openai: 'Leave Base URL empty for api.openai.com.',
   gemini: 'Uses Google\'s OpenAI-compatible endpoint.',
   custom_llm: 'Any OpenAI-compatible API: Groq (https://api.groq.com/openai/v1), DeepSeek, OpenRouter, Together, a local Ollama/vLLM…',
-  assemblyai: 'Speech-to-text: live captions, AI-call listening, recording transcripts.',
+  assemblyai: 'Speech-to-text (live captions, AI-call listening, recording transcripts) – and the same key runs the LLM Gateway (choose "AssemblyAI LLM Gateway" as an agent\'s LLM). Model to test with = a Gateway model.',
   deepgram: 'Speech-to-text (choose it in Settings, or per AI agent). The key needs the Member role or higher so the CRM can issue live-caption tokens.',
   elevenlabs: 'Voices for the custom pipeline and voicemail drops, and ElevenLabs agents. Webhook → Settings → Post-call webhook.',
   telnyx: 'Call Control App: set its webhook URL to the one below. Public key: Portal → Keys & Credentials.',

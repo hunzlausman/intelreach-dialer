@@ -676,3 +676,24 @@ def test_gemini_list_error_and_retry(c, monkeypatch):
     monkeypatch.setattr(net_mod, "transport", httpx2.MockTransport(flaky))
     text = run(llm.complete("custom_llm", "m1", "sys", "hello", max_tokens=10))
     assert text == "Hi!" and len(hits) == 2
+
+
+
+def test_assemblyai_llm_gateway(c, monkeypatch):
+    """The AssemblyAI key also runs the LLM Gateway (OpenAI-compatible, key without "Bearer")."""
+    import httpx2
+    from app import net as net_mod
+    seen = []
+
+    def gateway(request):
+        seen.append((str(request.url), request.headers.get("authorization"), json.loads(request.content)))
+        sse = 'data: {"choices": [{"delta": {"content": "OK"}}]}\n\ndata: [DONE]\n\n'
+        return httpx2.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(net_mod, "transport", httpx2.MockTransport(gateway))
+    assert run(llm.complete("assemblyai", "", "sys", "hello", max_tokens=10)) == "OK"
+    url, auth, body = seen[0]
+    assert url == "https://llm-gateway.assemblyai.com/v1/chat/completions" and auth == "aai-key"
+    assert body["model"] == "gemini-2.5-flash" and body["stream"] is True
+    agent = c.post("/api/ai-agents", json={"name": "Gw", "kind": "custom", "config": {
+        "prompt": "x", "llm_provider": "assemblyai", "llm_model": "claude-haiku-4-5-20251001", "carrier": "sip"}})
+    assert agent.status_code == 200

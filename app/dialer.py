@@ -89,7 +89,8 @@ async def tick():
                    "email": lead["email"], "country": lead["country"], "notes": lead["notes"]}
         try:
             if kind == "ai":
-                await launcher.place_ai_call(int(cfg["ai_agent_id"]), lead["phone"], contact, camp_id, lead["id"])
+                await launcher.place_ai_call(int(cfg["ai_agent_id"]), lead["phone"], contact, camp_id, lead["id"],
+                                             carrier=cfg.get("ai_carrier") or "sip", caller_id=cfg.get("from_number", ""))
             else:
                 await launcher.place_voicemail(camp_id, cfg, contact, lead["id"])
         except Exception as e:

@@ -142,6 +142,12 @@ async function editCampaign(c, done) {
       </div></div>
     <div data-kind="ai voicemail"><label>AI agent (makes the calls – or, for voicemail drops, takes over when a person answers)
       <select name="ai_agent_id">${options([['', '— choose —'], ...agents.map((a) => [a.id, `${a.name} (${a.kind})`])], cfg.ai_agent_id)}</select></label></div>
+    <div data-kind="ai" class="grid2">
+      <label>Calls go out through (Custom agents) <select name="ai_carrier">${options([['sip', 'Your SIP trunk (Admin → SIP trunks)'],
+        ['agent', "The AI agent's own Phone carrier"], ['telnyx', 'Telnyx Call Control API'], ['twilio', 'Twilio API']], cfg.ai_carrier || 'sip')}</select></label>
+      <label>Caller ID (empty = the agent's / trunk's number) <input name="from_number" list="cNumbers2" value="${esc(cfg.from_number)}" placeholder="+15551234567">
+        <datalist id="cNumbers2">${(settings._numbers || []).map((x) => `<option value="${esc(x.number)}">${esc(x.label)}</option>`).join('')}</datalist></label>
+    </div>
     <div data-kind="voicemail">
       <label>Voicemail message <textarea name="vm_text" rows="3">${esc(cfg.vm_text)}</textarea></label>
       <div class="grid2">
@@ -150,7 +156,7 @@ async function editCampaign(c, done) {
         <label>When a person answers <select name="on_human">${options([['play', 'Play the message too'], ['transfer', 'Transfer to a number'],
           ['ai', 'Hand over to an AI agent'], ['hangup', 'Hang up']], cfg.on_human)}</select></label>
         <label>Transfer to (+number) <input name="transfer_to" value="${esc(cfg.transfer_to)}" placeholder="+15551234567"></label>
-        <label>Caller ID (Telnyx number) <input name="from_number" value="${esc(cfg.from_number)}" placeholder="+15550002222"></label>
+        <label>Caller ID (Telnyx number) <input name="vm_from_number" value="${esc(cfg.from_number)}" placeholder="+15550002222"></label>
       </div>
     </div>
     <div data-kind="ai voicemail"><label>Calls at the same time <input name="concurrency" type="number" min="1" max="50" value="${esc(cfg.concurrency || 1)}"></label></div>
@@ -180,7 +186,8 @@ async function editCampaign(c, done) {
       e.preventDefault();
       const f = formData(e.target);
       const config = {};
-      ['goal', 'script', 'preview_seconds', 'trunk', 'caller_id', 'ai_agent_id', 'vm_text', 'vm_tts', 'vm_voice_id', 'on_human',
+      if (f.kind === 'voicemail' || (!isNew && c.kind === 'voicemail')) f.from_number = f.vm_from_number;
+      ['goal', 'script', 'preview_seconds', 'trunk', 'caller_id', 'ai_carrier', 'ai_agent_id', 'vm_text', 'vm_tts', 'vm_voice_id', 'on_human',
         'transfer_to', 'from_number', 'concurrency', 'window_start', 'window_end', 'max_attempts', 'retry_minutes', 'timezone']
         .forEach((k) => { if (f[k] !== undefined && f[k] !== '') config[k] = f[k]; });
       config.days = DAYS.filter(([d]) => f['day' + d]).map(([d]) => d).join(',');

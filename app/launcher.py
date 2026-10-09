@@ -11,7 +11,7 @@ import logging
 import os
 import uuid
 
-from . import config, db, net, outcomes, trunks
+from . import config, db, net, outcomes, trunks, vault
 from .ai import elevenlabs
 from .voice import audiosocket, carriers, engine
 
@@ -40,12 +40,47 @@ def _caller_id(cfg, settings, carrier):
     return ""                                  # telnyx: integration default from_number
 
 
-async def place_ai_call(agent_id, number, contact=None, campaign_id=None, lead_id=None, user_id=None, extra_vars=None):
+def ai_provider(agent, carrier=""):
+    """How this agent's call is placed. carrier: a campaign's choice – 'sip', 'telnyx', 'twilio',
+    or 'agent' / '' = the agent's own Phone carrier. Only Custom agents can be re-routed."""
+    if agent["kind"] == "custom":
+        return (carrier if carrier not in ("", "agent") else "") or agent["cfg"].get("carrier") or "sip"
+    return agent["kind"]                       # elevenlabs / telnyx: the provider runs the call
+
+
+def route_problem(con, agent, carrier=""):
+    """'' if the call can be placed, else what is missing (shown when a campaign starts / pauses)."""
+    p = ai_provider(agent, carrier)
+    if p == "sip":
+        if not con.execute("SELECT 1 FROM sip_trunks WHERE enabled = 1").fetchone():
+            return "No SIP trunk configured – missing in Admin → SIP trunks"
+        if agent["cfg"].get("tts_provider") == "telnyx":
+            return f"'{agent['name']}' uses a Telnyx voice, which only works on Telnyx API calls – choose ElevenLabs (missing voice)"
+        if not vault.key("elevenlabs"):
+            return "ElevenLabs API key missing (Admin → Integrations) – the AI agent's voice"
+        if not audiosocket.PORT:
+            return "AI over SIP trunks is not running in the CRM (AudioSocket server missing) – see journalctl -u intelreach-crm"
+    elif p == "telnyx" and not vault.key("telnyx"):
+        return ("Telnyx API key missing (Admin → Integrations) – or call through your SIP trunk: set the campaign's "
+                "'Calls go out through' (or the AI agent's Phone carrier) to 'Your SIP trunk'")
+    elif p == "twilio" and not all(vault.twilio_creds()):
+        return "Twilio Account SID / Auth Token missing (Admin → Integrations) – or use 'Your SIP trunk'"
+    elif p == "elevenlabs" and not vault.key("elevenlabs"):
+        return "ElevenLabs API key missing (Admin → Integrations)"
+    return ""
+
+
+async def place_ai_call(agent_id, number, contact=None, campaign_id=None, lead_id=None, user_id=None, extra_vars=None,
+                        carrier="", caller_id=""):
+    """carrier / caller_id: a campaign's choices, over the agent's own."""
     with db.tx() as con:
         agent = load_agent(con, agent_id)
+        problem = route_problem(con, agent, carrier)
+        if problem:
+            raise net.ProviderError(problem)
         s = db.get_settings(con)
-        cfg = agent["cfg"]
-        provider = {"custom": cfg.get("carrier") or "sip", "elevenlabs": "elevenlabs", "telnyx": "telnyx"}[agent["kind"]]
+        cfg = {**agent["cfg"], **({"from_number": caller_id} if caller_id else {})}
+        provider = ai_provider(agent, carrier)
         call_id = _new_call(con, number, (contact or {}).get("id"), provider, agent_id, campaign_id, lead_id, user_id)
         if lead_id:
             con.execute("UPDATE campaign_leads SET last_call_id = ?, attempts = attempts + 1 WHERE id = ?", (call_id, lead_id))

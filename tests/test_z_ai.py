@@ -156,7 +156,8 @@ def test_ai_campaign_dialer_and_telnyx_events(c):
         "llm_provider": "custom_llm", "llm_model": "m1", "voice_id": "v1", "fields": "budget: monthly budget"}}).json()
     contacts(c, ("Ai One", "+12025550201", "ai"), ("Ai Two", "+12025550202", "ai"), ("Ai Three", "+12025550203", "ai"))
     camp = c.post("/api/campaigns", json={"name": "AI", "kind": "ai",
-                                         "config": {**ALWAYS, "ai_agent_id": agent["id"], "concurrency": 2}}).json()
+                                         "config": {**ALWAYS, "ai_agent_id": agent["id"], "concurrency": 2,
+                                                    "ai_carrier": "agent"}}).json()
     c.post(f"/api/campaigns/{camp['id']}/leads", json={"all_matching": True, "tag": "ai"})
     c.post(f"/api/campaigns/{camp['id']}/status", json={"status": "running"})
     SENT.clear()
@@ -581,3 +582,36 @@ def test_ai_agent_over_sip_trunk(c, monkeypatch):
     r = c.get("/ast/inbound", params={"s": "sek", "did": "+15550009999", "src": "+12025550601"}).text
     assert r.startswith("PJSIP/2001|Sam Sip|") and r.endswith("|1")
     c.delete(f"/api/admin/numbers/{n['id']}")
+
+
+
+def test_ai_campaign_calls_through_the_sip_trunk_by_default(c, monkeypatch):
+    """A campaign uses the SIP trunk even if its Custom agent was saved with the Telnyx API carrier."""
+    from app import config, launcher
+    agent = next(a for a in c.get("/api/ai-agents").json()["items"]
+                 if a["kind"] == "custom" and a["config"].get("carrier") == "telnyx")
+    contacts(c, ("Tia Trunk", "+12025550701", "trunkcamp"))
+    assert c.post("/api/campaigns", json={"name": "x", "kind": "ai", "config": {"ai_carrier": "carrier-pigeon"}}).status_code == 400
+    assert c.post("/api/campaigns", json={"name": "x", "kind": "ai", "config": {"from_number": "123"}}).status_code == 400
+    camp = c.post("/api/campaigns", json={"name": "Trunk AI", "kind": "ai", "config": {
+        **ALWAYS, "ai_agent_id": agent["id"], "from_number": "+15550001111"}}).json()
+    c.post(f"/api/campaigns/{camp['id']}/leads", json={"all_matching": True, "tag": "trunkcamp"})
+    assert c.post(f"/api/campaigns/{camp['id']}/status", json={"status": "running"}).json()["status"] == "running"
+    SENT.clear()
+    run(dialer.tick())
+    files = list(Path(config.AST_SPOOL).glob("crm-ai-*.call"))
+    assert len(files) == 1 and not [u for _, u, _ in SENT if "telnyx" in u]       # no Telnyx API request
+    text = files[0].read_text()
+    assert "Channel: PJSIP/+12025550701@crm-trunk-1\n" in text and "CallerID: <+15550001111>" in text
+    files[0].unlink()
+    c.post(f"/api/campaigns/{camp['id']}/status", json={"status": "paused"})
+    engine.PENDING.clear()
+
+    # what is missing is reported when the campaign starts, not later
+    monkeypatch.setattr(vault, "key", lambda *a, **k: "")
+    with db.tx() as con:
+        a = launcher.load_agent(con, agent["id"])
+        assert "SIP trunk" in launcher.route_problem(con, a, "agent")              # Telnyx carrier, no Telnyx key
+        assert "ElevenLabs API key missing" in launcher.route_problem(con, a, "sip")
+    r = c.post(f"/api/campaigns/{camp['id']}/status", json={"status": "running"})
+    assert r.status_code == 400 and "ElevenLabs" in r.json()["detail"]

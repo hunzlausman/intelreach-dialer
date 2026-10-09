@@ -15,7 +15,7 @@ KINDS = {"power", "ai", "voicemail"}
 CONFIG_KEYS = {
     "goal", "script", "ai_agent_id", "from_number", "concurrency", "max_attempts", "retry_minutes",
     "window_start", "window_end", "days", "timezone", "preview_seconds", "vm_text", "vm_tts", "vm_voice_id",
-    "vm_language", "on_human", "transfer_to", "trunk", "caller_id",
+    "vm_language", "on_human", "transfer_to", "trunk", "caller_id", "ai_carrier",
 }
 
 
@@ -46,6 +46,10 @@ def clean_config(kind, cfg):
             except (TypeError, ValueError):
                 raise HTTPException(400, f"{k} must be a number")
     cfg["concurrency"] = min(int(cfg.get("concurrency") or 1), 50)
+    if cfg.get("ai_carrier", "sip") not in ("sip", "agent", "telnyx", "twilio"):
+        raise HTTPException(400, "Calls go out through: sip, telnyx, twilio or the agent's own setting")
+    if cfg.get("from_number") and not phone.E164.match(str(cfg["from_number"])):
+        raise HTTPException(400, "Caller ID must look like +15551234567")
     for k in ("window_start", "window_end"):
         if cfg.get(k) and not re.match(r"^\d{2}:\d{2}$", str(cfg[k])):
             raise HTTPException(400, f"{k} must look like 09:00")
@@ -130,6 +134,15 @@ async def set_status(cid: int, body: StatusIn, user=Depends(require_admin)):
             raise HTTPException(400, "Add leads first (or reset failed ones)")
         if c["kind"] == "ai" and not cfg.get("ai_agent_id"):
             raise HTTPException(400, "Choose the AI agent that makes the calls")
+        if c["kind"] == "ai":
+            with db.tx() as con:
+                try:
+                    problem = launcher.route_problem(con, launcher.load_agent(con, int(cfg["ai_agent_id"])),
+                                                     cfg.get("ai_carrier") or "sip")
+                except Exception as e:
+                    problem = str(e)
+            if problem:
+                raise HTTPException(400, problem)
         if c["kind"] == "voicemail":
             if not cfg.get("vm_text"):
                 raise HTTPException(400, "Write the voicemail message")

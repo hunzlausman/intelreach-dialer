@@ -7,8 +7,10 @@ Inbound:   /ast/inbound or /ast/ai-start hands the call to crm-ai the same way.
 
 AudioSocket (Asterisk 18+, chan_audiosocket): TCP, messages of
     1 byte kind | 2 bytes length (big endian) | payload
-    0x00 hangup, 0x01 uuid (16 bytes), 0x10 audio (signed 16-bit 8 kHz mono, LE), 0xff error
-The engine speaks 8 kHz μ-law (like Telnyx / Twilio streams), so frames are converted here.
+    0x00 hangup, 0x01 uuid (16 bytes), 0x10 audio, 0xff error
+Audio TO Asterisk is signed 16-bit 8 kHz mono LE. Audio FROM Asterisk 18 arrives in the phone
+line's own codec (μ-law / a-law, 160 bytes per 20 ms) – the dialplan reports it to /ast/ai-answer –
+or 16-bit if Asterisk transcodes. The engine works in 8 kHz μ-law, so frames are converted here.
 Only 127.0.0.1 can connect, and only with a uuid the CRM created for a call it placed / accepted.
 """
 import asyncio
@@ -46,8 +48,16 @@ def _lin_to_ulaw(s):
     return ~(sign | (exp << 4) | ((s >> (exp + 3)) & 0x0F)) & 0xFF
 
 
+def _alaw_to_lin(a):
+    a ^= 0x55
+    t, seg = (a & 0x0F) << 4, (a & 0x70) >> 4
+    t = t + 8 if seg == 0 else (t + 0x108) << (seg - 1) if seg > 1 else t + 0x108
+    return t if a & 0x80 else -t
+
+
 _DEC = [struct.pack("<h", _ulaw_to_lin(i)) for i in range(256)]
 _ENC = bytes(_lin_to_ulaw(i - 65536 if i > 32767 else i) for i in range(65536))
+_ALAW_TO_ULAW = bytes(_lin_to_ulaw(_alaw_to_lin(i)) for i in range(256))
 
 
 def ulaw_to_pcm(data: bytes) -> bytes:
@@ -57,6 +67,27 @@ def ulaw_to_pcm(data: bytes) -> bytes:
 def pcm_to_ulaw(data: bytes) -> bytes:
     n = len(data) // 2
     return bytes(_ENC[s & 0xFFFF] for s in struct.unpack(f"<{n}h", data[:n * 2]))
+
+
+def alaw_to_ulaw(data: bytes) -> bytes:
+    return data.translate(_ALAW_TO_ULAW)
+
+
+def codec_of(native_format: str) -> str:
+    """'(ulaw)' / '(alaw|ulaw)' from ${CHANNEL(audionativeformat)} -> 'ulaw' | 'alaw' | ''."""
+    f = (native_format or "").strip("() ").split("|")[0].lower()
+    return f if f in ("ulaw", "alaw") else ""
+
+
+def to_ulaw(payload: bytes, codec: str) -> bytes:
+    """Caller audio from Asterisk -> μ-law. Without a codec hint: 160 bytes per 20 ms = 8-bit, else 16-bit."""
+    if codec == "ulaw":
+        return payload
+    if codec == "alaw":
+        return alaw_to_ulaw(payload)
+    if codec == "slin" or len(payload) >= 320:
+        return pcm_to_ulaw(payload)
+    return payload
 
 
 # ------------------------------------------------------------------- transport ----
@@ -129,7 +160,10 @@ async def _handle(reader, writer):
             kind, payload = await _read(reader)
             if kind == KIND_AUDIO and payload:
                 frames += 1
-                await session.feed(pcm_to_ulaw(payload))
+                if frames == 1:
+                    log.info("AI call %s: caller audio %d bytes per frame, codec %s", t.call_id, len(payload),
+                             info.get("codec") or "unknown (guessing from the frame size)")
+                await session.feed(to_ulaw(payload, info.get("codec", "")))
             elif kind in (KIND_HANGUP, KIND_ERROR):
                 break
     except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError):

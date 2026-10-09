@@ -299,8 +299,10 @@ def ast_ai_start(request: Request, s: str = "", call: str = ""):
 
 
 @router.get("/ast/ai-answer", response_class=PlainTextResponse)
-def ast_ai_answer(request: Request, s: str = "", call: str = ""):
-    """The AI call is answered (outbound) or picked up by the AI (inbound). Answer: ok|<record 0/1> or none|."""
+def ast_ai_answer(request: Request, s: str = "", call: str = "", fmt: str = ""):
+    """The AI call is answered (outbound) or picked up by the AI (inbound). Answer: ok|<record 0/1> or none|.
+    fmt = ${CHANNEL(audionativeformat)} – the codec Asterisk will send the caller's audio in."""
+    from .voice import audiosocket, engine
     ast_guard(request, s)
     with db.tx() as con:
         row = con.execute("SELECT * FROM calls WHERE id = ? AND ended_at IS NULL", (int(call) if call.isdigit() else 0,)).fetchone()
@@ -308,6 +310,9 @@ def ast_ai_answer(request: Request, s: str = "", call: str = ""):
             return "none|"
         con.execute("UPDATE calls SET status = 'answered' WHERE id = ?", (row["id"],))
         a = con.execute("SELECT config FROM ai_agents WHERE id = ?", (row["ai_agent_id"],)).fetchone()
+    for info in engine.PENDING.values():
+        if info.get("call_id") == row["id"]:
+            info["codec"] = audiosocket.codec_of(fmt)
     rec = "1" if a and db.jload(a["config"]).get("record") else "0"
     return f"ok|{rec}"
 

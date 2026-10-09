@@ -473,6 +473,14 @@ def test_ulaw_codec_round_trip():
     assert a.pcm_to_ulaw(a.ulaw_to_pcm(every)) == every
     assert a.ulaw_to_pcm(b"\xff") == b"\x00\x00" and a.pcm_to_ulaw(b"\x00\x00") == b"\xff"
     assert a.pcm_to_ulaw((32767).to_bytes(2, "little", signed=True)) == b"\x80"
+    # caller audio from Asterisk 18 comes in the line's codec: μ-law passes through, a-law is converted
+    assert a.codec_of("(ulaw)") == "ulaw" and a.codec_of("(alaw|ulaw)") == "alaw" and a.codec_of("(slin)") == ""
+    voice = bytes(range(0, 256, 2)) + bytes(32)
+    assert a.to_ulaw(voice[:160], "ulaw") == voice[:160]
+    assert max(127 - (b & 0x7F) for b in a.to_ulaw(b"\xd5" * 160, "alaw")) <= 1   # a-law silence -> μ-law ~silence
+    assert a.pcm_to_ulaw(a.ulaw_to_pcm(a.to_ulaw(bytes([0x2A]), "alaw"))) == a.to_ulaw(bytes([0x2A]), "alaw")
+    assert a.to_ulaw(b"\x00" * 320, "") == b"\xff" * 160                       # 16-bit frame, no hint
+    assert a.to_ulaw(b"\x7f" * 160, "") == b"\x7f" * 160                       # 8-bit frame, no hint
 
 
 def test_ai_agent_over_sip_trunk(c, monkeypatch):
@@ -529,7 +537,7 @@ def test_ai_agent_over_sip_trunk(c, monkeypatch):
 
     # Asterisk: answered -> AudioSocket with the uuid; the caller asks for a person -> transfer to the CRM agents
     c.post("/api/me/heartbeat", json={"available": True})
-    assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id}).text == "ok|0"
+    assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id, "fmt": "(slin)"}).text == "ok|0"
     assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id}).text == "none|"     # a duplicate leg is refused
     assert [p.name for p in Path(config.AST_SPOOL).iterdir()] == [] and not list(Path(config.AST_SPOOL_TMP).iterdir())
     got, kinds = b"", []

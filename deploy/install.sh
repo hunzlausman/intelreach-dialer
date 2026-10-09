@@ -85,7 +85,7 @@ chown root:"$SVC" /etc/intelreach-crm/agent_pool.json; chmod 640 /etc/intelreach
 
 step "5/8 Asterisk (trunk + dialplan)"
 # another transport already listening on UDP 5060? (ours is transport-udp-crm)
-if asterisk -rx "pjsip show transports" | grep -E 'udp .*:5060' | grep -v transport-udp-crm | grep -q .; then
+if asterisk -rx "pjsip show transports" | grep -E 'udp .*:5060' | grep -v transport-udp-crm | grep . >/dev/null; then
   die "Another PJSIP UDP transport already uses port 5060 – remove it or move it to another port first."
 fi
 render() {
@@ -112,15 +112,15 @@ if [ ! -f "$MODDIR/func_curl.so" ] && command -v apt-get >/dev/null && dpkg -s a
   apt-get install -y -qq asterisk-modules >/dev/null || true       # Debian/Ubuntu packaged Asterisk
 fi
 # a shared library the modules need (usually libcurl) missing → install it
-if ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>/dev/null | grep -q 'libcurl.*not found' && command -v apt-get >/dev/null; then
+if ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>/dev/null | grep 'libcurl.*not found' >/dev/null && command -v apt-get >/dev/null; then
   apt-get install -y -qq libcurl4 >/dev/null || true
 fi
 RES_LOAD=$(asterisk -rx "module load res_curl.so" 2>&1 || true)
 CURL_LOAD=$(asterisk -rx "module load func_curl.so" 2>&1 || true)
-if ! asterisk -rx "module show like func_curl" | grep -q func_curl; then
+if ! asterisk -rx "module show like func_curl" | grep func_curl >/dev/null; then
   echo "  module directory: $MODDIR"
   ls -l "$MODDIR"/func_curl.so "$MODDIR"/res_curl.so 2>&1 | sed 's/^/  /'
-  echo "  missing libraries:"; ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>&1 | grep 'not found' | sed 's/^/    /'
+  echo "  missing libraries:"; ldd "$MODDIR/res_curl.so" "$MODDIR/func_curl.so" 2>&1 | grep 'not found' | sed 's/^/    /' || true
   echo "  loaded:"; asterisk -rx "module show like curl" | sed 's/^/    /'
   echo "  res_curl: $RES_LOAD"
   echo "  asterisk says: $CURL_LOAD"
@@ -133,7 +133,7 @@ ok "func_curl loaded"
 # AI agents over the SIP trunks: Dial(AudioSocket/…) + call files from the CRM
 asterisk -rx "module load res_audiosocket.so" >/dev/null 2>&1 || true      # chan_audiosocket needs it first
 asterisk -rx "module load chan_audiosocket.so" >/dev/null 2>&1 || true
-if asterisk -rx "module show like chan_audiosocket" | grep -q chan_audiosocket; then
+if asterisk -rx "module show like chan_audiosocket" | grep chan_audiosocket >/dev/null; then
   ok "chan_audiosocket loaded (AI agents on SIP trunks)"
 else
   warn "chan_audiosocket is not available – AI agents can't use the SIP trunks (Telnyx/Twilio API calls still work)"
@@ -144,15 +144,15 @@ chmod g+x "$(dirname "$SPOOL")"
 ok "CRM may start AI calls ($SPOOL)"
 asterisk -rx "module reload res_pjsip.so" >/dev/null
 asterisk -rx "dialplan reload" >/dev/null
-if asterisk -rx "pjsip show transports" | grep -q transport-udp-crm; then
+if asterisk -rx "pjsip show transports" | grep transport-udp-crm >/dev/null; then
   ok "transport-udp-crm loaded"
 else
   warn "The new UDP transport needs a full Asterisk restart (ends live calls/classes):  systemctl restart asterisk"
 fi
-asterisk -rx "pjsip show endpoint twilio-inbound" | grep -qi "twilio-inbound" && ok "twilio-inbound endpoint ok"
+asterisk -rx "pjsip show endpoint twilio-inbound" | grep -i "twilio-inbound" >/dev/null && ok "twilio-inbound endpoint ok"
 
 step "6/8 Firewall: SIP 5060/udp from the SIP providers only"
-if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
+if command -v ufw >/dev/null && ufw status | grep "Status: active" >/dev/null; then
   for net in $TWILIO_SIGNALLING; do ufw allow proto udp from "$net" to any port 5060 comment 'Twilio SIP' >/dev/null; done
   # Telnyx SIP signalling (in-dialog requests / incoming calls on a Telnyx trunk)
   for net in $TELNYX_SIGNALLING; do ufw allow proto udp from "$net" to any port 5060 comment 'Telnyx SIP' >/dev/null; done

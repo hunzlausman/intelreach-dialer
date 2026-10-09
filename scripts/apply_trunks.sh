@@ -12,7 +12,7 @@ asterisk -rx "module reload res_pjsip.so" >/dev/null
 asterisk -rx "module reload res_pjsip_outbound_registration.so" >/dev/null 2>&1 || true
 logger -t intelreach-crm "SIP trunks reloaded"
 
-command -v ufw >/dev/null && ufw status | grep -q "Status: active" || exit 0
+command -v ufw >/dev/null && ufw status | grep "Status: active" >/dev/null || exit 0
 # only well-formed IPv4 addresses / ranges, whatever the file contains
 valid() { grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$' "$1" 2>/dev/null | sort -u || true; }
 new=$(valid "$DIR/trunk_ips.txt")

@@ -1,8 +1,8 @@
 // AI agents: our own pipeline (STT -> LLM -> TTS), ElevenLabs agents, Telnyx AI Assistants.
 import { $, api, closeModal, esc, fail, modal, options, toast } from './core.js';
 
-const KINDS = [['custom', 'Custom pipeline (AssemblyAI → LLM → ElevenLabs)'], ['elevenlabs', 'ElevenLabs agent'],
-  ['telnyx', 'Telnyx AI Assistant']];
+const KINDS = [['custom', 'Custom – works on your SIP trunk (Deepgram/AssemblyAI → LLM → ElevenLabs)'],
+  ['elevenlabs', 'ElevenLabs agent (runs in ElevenLabs)'], ['telnyx', 'Telnyx AI Assistant (needs the Telnyx API)']];
 const LLMS = [['anthropic', 'Anthropic Claude'], ['openai', 'OpenAI'], ['gemini', 'Google Gemini'], ['custom_llm', 'OpenAI-compatible']];
 const MODEL_HINT = { anthropic: 'claude-opus-5-5 (or claude-sonnet-5-5, claude-haiku-5-5)', openai: 'e.g. gpt-4.1-mini',
   gemini: 'e.g. gemini-2.5-flash', custom_llm: 'model name at your provider' };

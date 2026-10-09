@@ -69,6 +69,13 @@ def ai_provider(agent, carrier=""):
 def route_problem(con, agent, carrier=""):
     """'' if the call can be placed, else what is missing (shown when a campaign starts / pauses)."""
     p = ai_provider(agent, carrier)
+    if agent["kind"] == "telnyx" and not vault.key("telnyx"):
+        return (f"'{agent['name']}' is a Telnyx AI Assistant – it runs inside Telnyx and needs the Telnyx API key "
+                "(missing in Admin → Integrations). To call through your SIP trunk, create an AI agent of type "
+                "'Custom' (Deepgram + LLM + ElevenLabs) and use that one.")
+    if agent["kind"] == "elevenlabs" and not vault.key("elevenlabs"):
+        return (f"'{agent['name']}' is an ElevenLabs agent and the ElevenLabs API key is missing (Admin → Integrations). "
+                "To call through your SIP trunk, use an AI agent of type 'Custom'.")
     if p == "sip":
         if not con.execute("SELECT 1 FROM sip_trunks WHERE enabled = 1").fetchone():
             return "No SIP trunk configured – missing in Admin → SIP trunks"

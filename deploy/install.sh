@@ -131,6 +131,7 @@ Built from source: apt install libcurl4-openssl-dev, then in the source folder .
 fi
 ok "func_curl loaded"
 # AI agents over the SIP trunks: Dial(AudioSocket/…) + call files from the CRM
+asterisk -rx "module load res_audiosocket.so" >/dev/null 2>&1 || true      # chan_audiosocket needs it first
 asterisk -rx "module load chan_audiosocket.so" >/dev/null 2>&1 || true
 if asterisk -rx "module show like chan_audiosocket" | grep -q chan_audiosocket; then
   ok "chan_audiosocket loaded (AI agents on SIP trunks)"

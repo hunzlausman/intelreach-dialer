@@ -22,7 +22,7 @@ export async function viewAgents(el, ctx) {
     box.innerHTML = d.items.map((a) => {
       const c = a.config;
       const detail = a.kind === 'custom'
-        ? `${esc(c.llm_provider || 'anthropic')} ${esc(c.llm_model || '')} · voice ${esc(c.tts_provider || 'elevenlabs')} · via ${esc(c.carrier || 'telnyx')}`
+        ? `${esc(c.llm_provider || 'anthropic')} ${esc(c.llm_model || '')} · voice ${esc(c.tts_provider || 'elevenlabs')} · via ${esc({ sip: 'SIP trunk', telnyx: 'Telnyx API', twilio: 'Twilio API' }[c.carrier || 'sip'] || c.carrier)}`
         : a.kind === 'elevenlabs' ? `ElevenLabs agent ${esc(c.el_agent_id)}` : `Telnyx assistant ${esc(c.tx_assistant_id)}`;
       return `<div class="card panel"><div class="toolbar" style="margin:0">
           <div style="flex:1"><b>${esc(a.name)}</b> <span class="tag">${esc((KINDS.find((k) => k[0] === a.kind) || ['', a.kind])[1])}</span>
@@ -93,7 +93,7 @@ async function editAgent(a, done) {
         <label>Longest call (minutes) <input name="max_minutes" type="number" min="1" value="${esc(c.max_minutes)}"></label>
         <label>Hang up after silence (seconds) <input name="silence_seconds" type="number" min="4" value="${esc(c.silence_seconds)}"></label>
       </div>
-      <label class="switch"><input type="checkbox" name="record" ${c.record ? 'checked' : ''}> Record calls (Telnyx)</label>
+      <label class="switch"><input type="checkbox" name="record" ${c.record ? 'checked' : ''}> Record calls</label>
     </div>
     <div data-kind="elevenlabs">
       <p class="muted">The conversation runs inside ElevenLabs (configure prompt, voice, tools and knowledge base there). Import your Telnyx

@@ -16,7 +16,8 @@ TWILIO = "https://api.twilio.com/2010-04-01/Accounts"
 def telnyx_cfg():
     cfg = vault.load("telnyx")
     if not cfg.get("api_key"):
-        raise net.ProviderError("Telnyx API key missing (Admin → Integrations)")
+        raise net.ProviderError("Telnyx API key missing (Admin → Integrations) – to call through your SIP trunk instead, "
+                                "set the AI agent's Phone carrier to 'Your SIP trunk'")
     return cfg
 
 

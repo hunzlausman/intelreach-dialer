@@ -45,7 +45,7 @@ async def place_ai_call(agent_id, number, contact=None, campaign_id=None, lead_i
         agent = load_agent(con, agent_id)
         s = db.get_settings(con)
         cfg = agent["cfg"]
-        provider = {"custom": cfg.get("carrier", "telnyx"), "elevenlabs": "elevenlabs", "telnyx": "telnyx"}[agent["kind"]]
+        provider = {"custom": cfg.get("carrier") or "sip", "elevenlabs": "elevenlabs", "telnyx": "telnyx"}[agent["kind"]]
         call_id = _new_call(con, number, (contact or {}).get("id"), provider, agent_id, campaign_id, lead_id, user_id)
         if lead_id:
             con.execute("UPDATE campaign_leads SET last_call_id = ?, attempts = attempts + 1 WHERE id = ?", (call_id, lead_id))

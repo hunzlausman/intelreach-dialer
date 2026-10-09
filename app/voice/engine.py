@@ -117,18 +117,28 @@ class VoiceSession:
         self.nudged = False
         self.tasks = []
         self.stt = None
+        self.tag = f"[AI call {self.call_id}]"
+        self.audio_frames, self.audio_peak, self.audio_logged = 0, 0, 0.0
+        self.last_partial, self.last_partial_at = "", 0.0
 
     # ------------------------------------------------------------ lifecycle
     async def start(self):
         LIVE[self.transport.external_id] = self
         self.tasks.append(asyncio.create_task(self._player()))
         self.tasks.append(asyncio.create_task(self._watchdog()))
+        prov, model = llm.resolve(self.cfg.get("llm_provider", "anthropic"), self.cfg.get("llm_model", ""))
+        log.info("%s start – STT %s (language %s) · LLM %s %s · TTS %s voice %s", self.tag,
+                 stt.provider(self.cfg.get("stt_provider", "")), self.cfg.get("language") or "auto", prov,
+                 model or llm.DEFAULT_MODELS.get(prov, ""), self.cfg.get("tts_provider") or "elevenlabs",
+                 self.cfg.get("voice_id") or "(none)")
         try:
             self.stt = stt.streaming(self._on_partial, self._on_turn, language=self.cfg.get("language", ""),
                                      override=self.cfg.get("stt_provider", ""))
+            t0 = time.time()
             await self.stt.start()
+            log.info("%s STT connected in %d ms", self.tag, (time.time() - t0) * 1000)
         except Exception as e:                       # no STT = no conversation; say so and hang up
-            log.warning("STT failed: %s", e)
+            log.warning("%s STT failed: %s", self.tag, e)
             self.ending = True                           # no "are you still there?" – just end the call
             await self.say("Sorry, we are having technical difficulties. Goodbye.")
             await self._hangup_after_speech()
@@ -140,6 +150,18 @@ class VoiceSession:
             await self.say(first)
 
     async def feed(self, audio: bytes):
+        self.audio_frames += 1
+        # μ-law: 0xFF / 0x7F = silence, lower 7 bits small = loud -> 0 (silent) … 127 (loudest)
+        self.audio_peak = max(self.audio_peak, max((127 - (b & 0x7F) for b in audio), default=0))
+        now = time.time()
+        if self.audio_frames == 1:
+            log.info("%s audio in: first caller audio received", self.tag)
+            self.audio_logged = now
+        elif now - self.audio_logged >= 5:
+            log.info("%s audio in: %d frames (%.1f s) so far, peak level %d/127%s", self.tag, self.audio_frames,
+                     self.audio_frames * len(audio) / 8000, self.audio_peak,
+                     " – silence only" if self.audio_peak < 8 else "")
+            self.audio_logged, self.audio_peak = now, 0
         if self.stt:
             await self.stt.send(audio)
 
@@ -152,6 +174,8 @@ class VoiceSession:
             t.cancel()
         if self.stt:
             await self.stt.close()
+        log.info("%s end – %d s, %d caller audio frames, %d transcript lines, outcome %s", self.tag,
+                 int(time.time() - self.started), self.audio_frames, len(self.transcript), self.outcome or "-")
         await outcomes.finish_ai_conversation(self.call_id, self.transcript, self.fields, self.outcome,
                                               self.callback, int(time.time() - self.started))
 
@@ -161,12 +185,15 @@ class VoiceSession:
         return time.time() < self.speaking_until or not self.out.empty()
 
     async def _on_partial(self, text):
+        if text != self.last_partial and time.time() - self.last_partial_at >= 1:
+            log.info("%s STT partial: %s", self.tag, text[:200])
+            self.last_partial, self.last_partial_at = text, time.time()
         self.last_activity = time.time()
         if self.speaking and len(text.split()) >= 2 and not self.ending:
             await self.interrupt()
 
     async def _on_turn(self, text):
-        log.info("AI call %s – caller said: %s", self.call_id, text[:200])
+        log.info("%s STT final – caller said: %s", self.tag, text[:300])
         self.last_activity = time.time()
         self.nudged = False
         if self.ending:
@@ -192,10 +219,15 @@ class VoiceSession:
         try:
             for _ in range(4):                       # LLM -> tools -> LLM … (bounded)
                 said, buf, done = "", "", None
+                t0, first_at = time.time(), None
+                log.info("%s LLM request (%d messages)", self.tag, len(self.history))
                 async for kind, data in llm.stream_chat(self.cfg.get("llm_provider", "anthropic"),
                                                         self.cfg.get("llm_model", ""), self.system, self.history,
                                                         TOOLS, effort="low", max_tokens=1024):
                     if kind == "text":
+                        if first_at is None:
+                            first_at = time.time()
+                            log.info("%s LLM first token after %d ms", self.tag, (first_at - t0) * 1000)
                         buf += data
                         # speak sentence by sentence as soon as each one is complete
                         while True:
@@ -210,6 +242,10 @@ class VoiceSession:
                 if buf.strip():
                     said += buf.strip()
                     await self.say(buf.strip())
+                log.info("%s LLM reply in %d ms: %s%s", self.tag, (time.time() - t0) * 1000,
+                         (done or {}).get("text", "")[:300] or "(no text)",
+                         " · tools: " + ", ".join(f"{c['name']}({json.dumps(c['input'], ensure_ascii=False)[:120]})"
+                                                for c in (done or {}).get("tool_calls") or []) if (done or {}).get("tool_calls") else "")
                 self.history.append({"role": "assistant", "text": done["text"], "tool_calls": done["tool_calls"],
                                      "raw": done["raw"]})
                 if said.strip():
@@ -226,7 +262,7 @@ class VoiceSession:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            log.warning("reply failed: %s", e)
+            log.warning("%s LLM reply failed: %s", self.tag, e)
             await self.say("Sorry, could you say that again?")
 
     async def _tool(self, name, args):
@@ -271,15 +307,26 @@ class VoiceSession:
                 "language": self.cfg.get("language") or "en-US"})
             self.speaking_until = time.time() + 0.45 * len(text.split()) + 0.5   # refined by call.speak.ended
             return
-        rest = b""
-        async for chunk in elevenlabs.tts_stream(text, self.cfg.get("voice_id", ""), self.cfg.get("tts_model", "")):
-            data = rest + chunk
-            cut = len(data) - len(data) % FRAME
-            for i in range(0, cut, FRAME):
-                await self.out.put(data[i:i + FRAME])
-            rest = data[cut:]
+        rest, t0, first_at, total = b"", time.time(), None, 0
+        try:
+            async for chunk in elevenlabs.tts_stream(text, self.cfg.get("voice_id", ""), self.cfg.get("tts_model", "")):
+                if first_at is None:
+                    first_at = time.time()
+                total += len(chunk)
+                data = rest + chunk
+                cut = len(data) - len(data) % FRAME
+                for i in range(0, cut, FRAME):
+                    await self.out.put(data[i:i + FRAME])
+                rest = data[cut:]
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("%s TTS failed (ElevenLabs voice %s): %s", self.tag, self.cfg.get("voice_id") or "(none)", e)
+            raise
         if rest:
             await self.out.put(rest + b"\xff" * (FRAME - len(rest)))     # pad with μ-law silence
+        log.info("%s TTS %d chars → %.1f s audio, first audio after %d ms: %s", self.tag, len(text), total / 8000,
+                 ((first_at or time.time()) - t0) * 1000, text[:120])
 
     def carrier_event(self, event_type):
         if event_type == "call.speak.ended":
@@ -339,6 +386,7 @@ class VoiceSession:
             busy = self.speaking or (self.reply_task and not self.reply_task.done())
             if not busy and time.time() - self.last_activity > silence:
                 if not self.nudged:
+                    log.info("%s no speech for %d s – asking if the caller is still there", self.tag, silence)
                     self.nudged = True
                     self.last_activity = time.time()
                     await self.say("Are you still there?")

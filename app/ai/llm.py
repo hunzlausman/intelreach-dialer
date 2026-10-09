@@ -263,10 +263,16 @@ def _reasoning_choices(model):
 
 async def _openai_stream(provider, model, system, history, tools, max_tokens, realtime=False):
     choices = [v for v in (_reasoning_choices(model) if realtime else []) if (provider, model, v) not in NO_REASONING_PARAM]
-    for value in choices + [None]:
+    attempts = [(v, tools) for v in choices] + [(None, tools)]
+    if tools:
+        attempts.append((None, []))             # last resort: a model that refuses the tools still answers
+    for value, tools_now in attempts:
+        if tools and not tools_now:
+            log.warning("%s %s refused the request with tools – answering without them (no hang-up / transfer "
+                        "tools this turn)", provider, model)
         started = False
         try:
-            async for ev in _openai_stream_once(provider, model, system, history, tools, max_tokens, value):
+            async for ev in _openai_stream_once(provider, model, system, history, tools_now, max_tokens, value):
                 started = True
                 yield ev
             return
@@ -277,6 +283,8 @@ async def _openai_stream(provider, model, system, history, tools, max_tokens, re
             if value and not started and f"{provider} 400" in str(e):
                 NO_REASONING_PARAM.add((provider, model, value))
                 log.info("%s %s does not take reasoning_effort=%s – sending without it", provider, model, value)
+                continue
+            if tools_now and not started and f"{provider} 400" in str(e):
                 continue
             raise
 

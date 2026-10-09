@@ -28,5 +28,8 @@ def check(r, who):
                 msg = body
         except ValueError:
             msg = r.text[:300]
-        raise ProviderError(f"{who} {r.status_code}: {str(msg)[:300]}")
+        detail = str(msg)
+        if r.status_code == 400 and len(detail) < 60 and len(r.text) > len(detail) + 20:   # vague: add the raw body
+            detail += " – " + r.text[:400]
+        raise ProviderError(f"{who} {r.status_code}: {detail[:500]}")
     return r

@@ -39,8 +39,10 @@ TOOLS = [
      "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}},
     {"name": "save_lead_info", "description": "Store facts learned about the contact (qualification answers, "
      "budget, email, best time…). Call whenever you learn something new.",
-     "parameters": {"type": "object", "properties": {"fields": {"type": "object",
-                    "description": "field name -> value"}}, "required": ["fields"]}},
+     # a list of {name, value} – an object without declared properties is refused by strict schema checks
+     "parameters": {"type": "object", "properties": {"fields": {"type": "array", "description": "What you learned",
+                    "items": {"type": "object", "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                              "required": ["name", "value"]}}}, "required": ["fields"]}},
     {"name": "schedule_callback", "description": "The contact wants to be called back at a specific time.",
      "parameters": {"type": "object", "properties": {
          "when": {"type": "string", "description": "ISO 8601 date-time in the contact's local time"},
@@ -294,8 +296,11 @@ class VoiceSession:
     async def _tool(self, name, args):
         """Returns (result text for the model, stop generating?)."""
         if name == "save_lead_info":
-            if isinstance(args.get("fields"), dict):
-                self.fields.update({str(k): v for k, v in args["fields"].items()})
+            f = args.get("fields")
+            if isinstance(f, dict):
+                self.fields.update({str(k): v for k, v in f.items()})
+            elif isinstance(f, list):
+                self.fields.update({str(x["name"]): x.get("value", "") for x in f if isinstance(x, dict) and x.get("name")})
             return "saved", False
         if name == "set_outcome":
             if args.get("outcome") in OUTCOMES:

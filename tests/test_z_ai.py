@@ -744,3 +744,36 @@ def test_history_shape_for_strict_llms():
     assert msgs[4]["content"] is None and msgs[5]["content"] == '{"ok": true}'
     a = llm.to_anthropic(hist)
     assert a[0] == {"role": "user", "content": llm.CALL_START} and a[2]["content"] == "Who is this?\nHello?"
+
+
+
+def test_llm_answers_without_tools_when_refused(c, monkeypatch):
+    import httpx2
+    from app import net as net_mod
+    from app.voice import engine as eng
+    seen = []
+
+    def api(request):
+        body = json.loads(request.content)
+        seen.append(len(body.get("tools") or []))
+        if body.get("tools"):
+            return httpx2.Response(400, json={"error": "invalid request body", "detail": "tools[2].parameters: bad"})
+        sse = 'data: {"choices": [{"delta": {"content": "Sure."}}]}\n\ndata: [DONE]\n\n'
+        return httpx2.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+    monkeypatch.setattr(net_mod, "transport", httpx2.MockTransport(api))
+    evs = run(_collect(llm.stream_chat("assemblyai", "deepseek-v4.1-flash", "s", [{"role": "user", "text": "hi"}],
+                                       tools=eng.TOOLS, realtime=True)))
+    assert seen == [5, 0] and evs[-1][1]["text"] == "Sure."
+    # the vague 400 now carries the raw body for the log
+    r = httpx2.Response(400, json={"error": "invalid request body", "detail": "tools[2].parameters: bad"})
+    try:
+        net_mod.check(r, "assemblyai")
+    except net_mod.ProviderError as e:
+        assert "tools[2].parameters" in str(e)
+    # save_lead_info: strict schema (array of name/value) and the engine reads both forms
+    spec = next(t for t in eng.TOOLS if t["name"] == "save_lead_info")["parameters"]["properties"]["fields"]
+    assert spec["type"] == "array" and spec["items"]["required"] == ["name", "value"]
+
+
+async def _collect(gen):
+    return [ev async for ev in gen]

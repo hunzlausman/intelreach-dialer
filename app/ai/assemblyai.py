@@ -2,9 +2,12 @@
 captions, and transcripts of recorded calls."""
 import asyncio
 import json
+import logging
 import urllib.parse
 
 from .. import net, vault
+
+log = logging.getLogger("crm.assemblyai")
 
 STREAM_URL = "wss://streaming.assemblyai.com/v3/ws"
 API = "https://api.assemblyai.com/v2"
@@ -68,6 +71,8 @@ class StreamingSTT:
                 if isinstance(msg, bytes):
                     continue
                 data = json.loads(msg)
+                if data.get("type") == "Error" or data.get("error"):
+                    log.warning("AssemblyAI: %s", msg[:300])
                 if data.get("type") != "Turn":
                     continue
                 text = (data.get("transcript") or "").strip()
@@ -77,8 +82,11 @@ class StreamingSTT:
                     await self.on_turn(text)
                 else:
                     await self.on_partial(text)
-        except Exception:
-            pass
+            log.info("AssemblyAI stream closed: %s %s", getattr(self.ws, "close_code", ""), getattr(self.ws, "close_reason", ""))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("AssemblyAI stream error: %s", e)
 
     async def close(self):
         if self.ws:

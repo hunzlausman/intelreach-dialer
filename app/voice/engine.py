@@ -129,6 +129,7 @@ class VoiceSession:
             await self.stt.start()
         except Exception as e:                       # no STT = no conversation; say so and hang up
             log.warning("STT failed: %s", e)
+            self.ending = True                           # no "are you still there?" – just end the call
             await self.say("Sorry, we are having technical difficulties. Goodbye.")
             await self._hangup_after_speech()
             return

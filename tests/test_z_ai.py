@@ -86,6 +86,7 @@ def c():
         for prov, vals in {"telnyx": {"api_key": "KEYtx", "connection_id": "conn1", "public_key": TX_PUB,
                                       "from_number": "+15550002222"},
                            "elevenlabs": {"api_key": "el-key", "webhook_secret": "whsec"},
+                           "assemblyai": {"api_key": "aai-key"},
                            "custom_llm": {"base_url": "http://llm.test/v1", "api_key": "k"}}.items():
             assert client.put(f"/api/admin/integrations/{prov}", json=vals).status_code == 200
         client.put("/api/admin/settings", json={"analysis_llm": "custom_llm", "analysis_model": "m1"})
@@ -529,6 +530,8 @@ def test_ai_agent_over_sip_trunk(c, monkeypatch):
     # Asterisk: answered -> AudioSocket with the uuid; the caller asks for a person -> transfer to the CRM agents
     c.post("/api/me/heartbeat", json={"available": True})
     assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id}).text == "ok|0"
+    assert c.get("/ast/ai-answer", params={"s": "sek", "call": call_id}).text == "none|"     # a duplicate leg is refused
+    assert [p.name for p in Path(config.AST_SPOOL).iterdir()] == [] and not list(Path(config.AST_SPOOL_TMP).iterdir())
     got, kinds = b"", []
     with socket.create_connection(("127.0.0.1", audiosocket.PORT), timeout=10) as sock:
         sock.sendall(b"\x01\x00\x10" + uuidlib.UUID(uid).bytes)
@@ -621,3 +624,13 @@ def test_ai_campaign_calls_through_the_sip_trunk_by_default(c, monkeypatch):
     fixed = next(x for x in c.get("/api/ai-agents").json()["items"] if x["id"] == agent["id"])
     assert fixed["config"]["carrier"] == "sip"
     assert c.get("/api/health").json()["version"] and c.get("/app.js").headers["cache-control"] == "no-cache"
+
+
+def test_stt_uses_the_provider_that_has_a_key(c, monkeypatch):
+    from app.ai import stt
+    c.put("/api/admin/settings", json={"stt_provider": "assemblyai"})
+    keys = {"deepgram": "dg"}
+    monkeypatch.setattr(vault, "key", lambda p, field="api_key": keys.get(p, ""))
+    assert stt.provider() == "deepgram" and stt.missing() == ""
+    keys.clear()
+    assert "Speech-to-text API key missing" in stt.missing()

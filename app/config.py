@@ -55,3 +55,5 @@ TRUNKS_DIR = env("CRM_TRUNKS_DIR", "/etc/intelreach-crm/asterisk")
 # outbound AI calls are started with call files in Asterisk's spool
 AUDIOSOCKET_PORT = int(env("CRM_AUDIOSOCKET_PORT", "8045") or 8045)
 AST_SPOOL = env("CRM_AST_SPOOL", "/var/spool/asterisk/outgoing")
+# call files are written here first (same file system), then moved into the spool in one step
+AST_SPOOL_TMP = env("CRM_AST_SPOOL_TMP", "/var/spool/asterisk/crm-tmp")

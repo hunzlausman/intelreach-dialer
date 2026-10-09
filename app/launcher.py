@@ -83,6 +83,9 @@ def route_problem(con, agent, carrier=""):
             return f"'{agent['name']}' uses a Telnyx voice, which only works on Telnyx API calls – choose ElevenLabs (missing voice)"
         if not vault.key("elevenlabs"):
             return "ElevenLabs API key missing (Admin → Integrations) – the AI agent's voice"
+        from .ai import stt
+        if stt.missing(agent["cfg"].get("stt_provider", "")):
+            return stt.missing(agent["cfg"].get("stt_provider", ""))
         if not audiosocket.PORT:
             return "AI over SIP trunks is not running in the CRM (AudioSocket server missing) – see journalctl -u intelreach-crm"
     elif p == "telnyx" and not vault.key("telnyx"):

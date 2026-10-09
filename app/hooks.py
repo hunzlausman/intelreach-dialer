@@ -304,7 +304,7 @@ def ast_ai_answer(request: Request, s: str = "", call: str = ""):
     ast_guard(request, s)
     with db.tx() as con:
         row = con.execute("SELECT * FROM calls WHERE id = ? AND ended_at IS NULL", (int(call) if call.isdigit() else 0,)).fetchone()
-        if not row or not row["ai_agent_id"]:
+        if not row or not row["ai_agent_id"] or row["status"] == "answered":     # a second leg never takes over
             return "none|"
         con.execute("UPDATE calls SET status = 'answered' WHERE id = ?", (row["id"],))
         a = con.execute("SELECT config FROM ai_agents WHERE id = ?", (row["ai_agent_id"],)).fetchone()

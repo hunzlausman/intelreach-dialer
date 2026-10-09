@@ -9,11 +9,25 @@ PROVIDERS = {"assemblyai": "AssemblyAI", "deepgram": "Deepgram"}
 
 
 def provider(override=""):
+    """The chosen provider – or, if only the other one has an API key, that one (a key in Integrations
+    without switching Settings → Speech-to-text should still work)."""
     if override in PROVIDERS:
-        return override
-    with db.tx() as con:
-        p = db.get_settings(con).get("stt_provider", "assemblyai")
-    return p if p in PROVIDERS else "assemblyai"
+        p = override
+    else:
+        with db.tx() as con:
+            p = db.get_settings(con).get("stt_provider", "assemblyai")
+        p = p if p in PROVIDERS else "assemblyai"
+    if not vault.key(p):
+        other = next((o for o in PROVIDERS if o != p and vault.key(o)), None)
+        if other:
+            return other
+    return p
+
+
+def missing(override=""):
+    """'' or the reason no speech-to-text can run."""
+    p = provider(override)
+    return "" if vault.key(p) else f"Speech-to-text API key missing – add Deepgram or AssemblyAI in Admin → Integrations"
 
 
 def streaming(on_partial, on_turn, language="", override=""):

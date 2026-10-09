@@ -110,7 +110,7 @@ async def _read(reader, timeout=None):
 
 
 async def _handle(reader, writer):
-    session, uid = None, None
+    session, uid, t = None, None, None
     try:
         kind, payload = await _read(reader, timeout=5)
         if kind != KIND_UUID or len(payload) != 16:
@@ -135,7 +135,8 @@ async def _handle(reader, writer):
     except Exception as e:
         log.warning("AudioSocket error: %s", e)
     finally:
-        CONNS.pop(uid, None)
+        if t is not None and CONNS.get(uid) is t:       # a refused duplicate must not drop the live call's entry
+            CONNS.pop(uid, None)
         if session:
             await session.close()
         try:
@@ -163,11 +164,20 @@ def originate(endpoint, dial, caller_id, call_id, uid, wait=45):
     text = (f"Channel: PJSIP/{dial}@{endpoint}\nCallerID: <{caller_id}>\nMaxRetries: 0\nWaitTime: {int(wait)}\n"
             f"Context: crm-ai\nExtension: s\nPriority: 1\nSetvar: CRMID={int(call_id)}\nSetvar: AIUUID={uid}\n"
             f"Archive: no\n")
-    tmp = os.path.join(config.AST_SPOOL, f".crm-ai-{int(call_id)}.call")      # Asterisk skips dot files
+    # Asterisk dials every file that appears in its spool – even a half-written or temporary one – so the
+    # file is written outside the spool and moved in with one rename (a dot-name inside it was dialled twice)
+    final = os.path.join(config.AST_SPOOL, f"crm-ai-{int(call_id)}.call")
+    tmp = os.path.join(config.AST_SPOOL_TMP, f"crm-ai-{int(call_id)}.call")
     try:
-        with open(tmp, "w", encoding="ascii") as f:
-            f.write(text)
-        os.chmod(tmp, 0o664)
-        os.replace(tmp, os.path.join(config.AST_SPOOL, f"crm-ai-{int(call_id)}.call"))
+        try:
+            with open(tmp, "w", encoding="ascii") as f:
+                f.write(text)
+            os.chmod(tmp, 0o664)
+            os.replace(tmp, final)
+        except OSError:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            with open(final, "w", encoding="ascii") as f:     # no usable temp dir: Asterisk waits for the close
+                f.write(text)
     except OSError as e:
         raise RuntimeError(f"cannot write to Asterisk's spool {config.AST_SPOOL} ({e}) – re-run deploy/install.sh")

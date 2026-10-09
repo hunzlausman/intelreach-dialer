@@ -141,6 +141,9 @@ else
 fi
 SPOOL=${CRM_AST_SPOOL:-/var/spool/asterisk/outgoing}
 mkdir -p "$SPOOL"; chown asterisk:asterisk "$SPOOL"; chmod 2770 "$SPOOL"
+SPOOL_TMP=${CRM_AST_SPOOL_TMP:-/var/spool/asterisk/crm-tmp}      # call files are written here, then moved in
+mkdir -p "$SPOOL_TMP"; chown "$SVC:asterisk" "$SPOOL_TMP"; chmod 2770 "$SPOOL_TMP"
+rm -f "$SPOOL"/.crm-ai-*.call
 chmod g+x "$(dirname "$SPOOL")"
 ok "CRM may start AI calls ($SPOOL)"
 asterisk -rx "module reload res_pjsip.so" >/dev/null

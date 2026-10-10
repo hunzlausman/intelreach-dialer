@@ -1,18 +1,19 @@
 // Admin: Twilio number, SIP trunks + numbers, settings, provider integrations, agents.
-import { $, api, closeModal, esc, fail, formData, modal, options, session, toast } from './core.js';
+import { $, api, closeModal, esc, fail, formData, modal, options, pageHead, session, toast } from './core.js';
 
 export async function viewAdmin(el, ctx) {
   ctx.setRefresh(() => {});
-  el.innerHTML = `<div class="tabs">
-      <a href="#/admin/twilio" data-tab="twilio">Twilio number</a><a href="#/admin/trunks" data-tab="trunks">SIP trunks</a>
-      <a href="#/admin/settings" data-tab="settings">Settings</a>
-      <a href="#/admin/integrations" data-tab="integrations">Integrations</a><a href="#/admin/agents" data-tab="agents">Agents</a>
-      <span class="muted" style="margin-left:auto;align-self:center;font-size:12px">version ${esc(session.me.version || '?')}</span></div>
+  el.innerHTML = `${pageHead('Settings', 'Phone lines, AI providers, your team and calling rules.',
+      `<span class="muted small">version ${esc(session.me.version || '?')}</span>`)}
+    <div class="tabs">
+      <a href="#/admin/settings" data-tab="settings">General</a><a href="#/admin/trunks" data-tab="trunks">Phone lines</a>
+      <a href="#/admin/integrations" data-tab="integrations">Integrations</a><a href="#/admin/agents" data-tab="agents">Team</a>
+      <a href="#/admin/twilio" data-tab="twilio">Twilio (GHL)</a></div>
     <div id="adminBody"></div>`;
-  const tab = ctx.sub || 'twilio';
+  const tab = ctx.sub || 'settings';
   el.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   const body = $('#adminBody');
-  ({ twilio: loadTwilio, trunks: loadTrunks, settings: loadSettings, integrations: loadIntegrations, agents: loadUsers }[tab] || loadTwilio)(body, ctx);
+  ({ twilio: loadTwilio, trunks: loadTrunks, settings: loadSettings, integrations: loadIntegrations, agents: loadUsers }[tab] || loadSettings)(body, ctx);
 }
 
 // ----------------------------------------------------------------- Twilio ----

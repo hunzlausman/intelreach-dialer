@@ -1,5 +1,5 @@
 // Campaigns: power dialer (agents), AI agent calling, voicemail drop.
-import { $, api, bindPager, closeModal, CONTACT_STATUSES, dur, esc, fail, formData, modal, options, pager, session, toast, when } from './core.js';
+import { $, api, bindPager, closeModal, CONTACT_STATUSES, dur, esc, fail, formData, modal, options, pageHead, pager, session, toast, when } from './core.js';
 
 const KIND_LABEL = { power: 'Power dialer', ai: 'AI agent calls', voicemail: 'Voicemail drop' };
 const STATUS_PILL = { running: 'ready', paused: 'connecting', draft: '', completed: '' };
@@ -13,15 +13,15 @@ function statsLine(s) {
 
 export async function viewCampaigns(el, ctx) {
   const admin = session.me.user.role === 'admin';
-  el.innerHTML = `<div class="toolbar"><h2 style="margin:0;flex:1">Campaigns</h2>
-      ${admin ? '<button class="btn primary" id="newCamp">+ Campaign</button>' : ''}</div>
+  el.innerHTML = `${pageHead('Campaigns', 'Power dialing for your team, AI calling and voicemail drops.',
+      admin ? '<button class="btn primary" id="newCamp">+ Campaign</button>' : '')}
     <div id="clist"><div class="empty">Loading…</div></div>`;
   if (admin) $('#newCamp').onclick = () => editCampaign(null, (c) => { location.hash = '#/campaigns/' + c.id; });
   const load = async () => {
     const d = await api('/campaigns').catch(fail);
     const box = $('#clist');
     if (!d || !box) return;
-    if (!d.items.length) { box.innerHTML = '<div class="card empty">No campaigns yet</div>'; return; }
+    if (!d.items.length) { box.innerHTML = '<div class="card empty"><b>No campaigns yet</b>Create one to power-dial a lead list with your team or let an AI agent call it.</div>'; return; }
     box.innerHTML = d.items.map((c) => `<div class="card panel click-card" data-id="${c.id}">
         <div class="toolbar" style="margin:0">
           <div style="flex:1"><b>${esc(c.name)}</b> <span class="tag">${KIND_LABEL[c.kind]}</span>

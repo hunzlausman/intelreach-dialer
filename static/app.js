@@ -4,9 +4,10 @@ import { viewAgents } from './agents.js';
 import { viewCampaign, viewCampaigns } from './campaigns.js';
 import { startCaptions, stopCaptions } from './captions.js';
 import {
-  $, api, bindPager, closeModal, CONTACT_STATUSES, dur, esc, fail, formData, modal, options, OUTCOMES, outcomeLabel,
-  pager, session, STATUS_LABEL, tags, toast, when,
+  $, api, bindPager, closeModal, CONTACT_STATUSES, dur, esc, fail, formData, icon, modal, options, OUTCOMES, outcomeLabel,
+  pageHead, pager, session, STATUS_LABEL, store, tags, toast, when,
 } from './core.js';
+import { viewDashboard } from './dashboard.js';
 import { Phone } from './phone.js';
 
 $('#modal').addEventListener('mousedown', (e) => { if (e.target.id === 'modal') closeModal(); });
@@ -24,6 +25,54 @@ const ctx = {
   renderPhone: () => renderPhone(),
   sub: '',
 };
+
+// --------------------------------------------------------------- shell ----
+const NAV = [
+  ['dashboard', 'Dashboard', 'dashboard'], ['contacts', 'Contacts', 'contacts'], ['calls', 'Calls', 'calls'],
+  ['campaigns', 'Campaigns', 'campaigns'], ['agents', 'AI agents', 'agents', true], ['admin', 'Settings', 'settings', true],
+];
+const TITLES = Object.fromEntries(NAV.map(([v, t]) => [v, t]));
+
+function buildShell() {
+  const admin = session.me.user.role === 'admin';
+  $('#nav').innerHTML = NAV.filter((n) => !n[3] || admin)
+    .map(([v, label, ic]) => `<a class="nav-item" href="#/${v}" data-view="${v}">${icon(ic)}<span>${label}</span></a>`).join('');
+  $('#menuBtn').innerHTML = icon('menu');
+  $('#logoutBtn').innerHTML = icon('logout');
+  $('#fab').innerHTML = icon('calls');
+  const u = session.me.user;
+  $('#avatar').textContent = (u.name || u.email).split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  $('#userRole').textContent = u.role === 'admin' ? 'Admin' : 'Agent';
+  themeIcon();
+  setDock(store.get('dock') !== 'closed' && window.innerWidth > 1100);
+}
+
+function effectiveTheme() {
+  const t = document.documentElement.dataset.theme;
+  if (t) return t;
+  return window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function themeIcon() { $('#themeBtn').innerHTML = icon(effectiveTheme() === 'dark' ? 'sun' : 'moon'); }
+$('#themeBtn').addEventListener('click', () => {
+  const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  store.set('theme', next);
+  themeIcon();
+  refreshView();               // charts re-read their colours
+});
+
+function setDock(open) {
+  $('#app').classList.toggle('dock-closed', !open);
+  if (window.innerWidth > 1100) store.set('dock', open ? null : 'closed');
+}
+const openDock = () => setDock(true);
+$('#dockToggle').addEventListener('click', () => setDock($('#app').classList.contains('dock-closed')));
+$('#dockClose').addEventListener('click', () => setDock(false));
+$('#fab').addEventListener('click', openDock);
+function setNav(open) { $('#app').classList.toggle('nav-open', open); $('#scrim').hidden = !open; }
+$('#menuBtn').addEventListener('click', () => setNav(true));
+$('#scrim').addEventListener('click', () => setNav(false));
+$('#nav').addEventListener('click', (e) => { if (e.target.closest('a')) setNav(false); });
 
 // ---------------------------------------------------------------- auth ----
 function showLogin() {
@@ -61,7 +110,7 @@ async function boot() {
   document.title = me.company;
   $('#userName').textContent = me.user.name;
   $('#availToggle').checked = !!me.user.available;
-  document.querySelectorAll('.admin-only').forEach((el) => { el.hidden = me.user.role !== 'admin'; });
+  buildShell();
   if (me.sip) phone.start(me.sip);
   renderPhone();
   heartbeat();
@@ -110,8 +159,13 @@ function lineStatus() {
   const me = session.me;
   const st = { ready: ['ready', `Line ${me && me.sip ? me.sip.ext : ''} ready`], connecting: ['connecting', 'Connecting…'],
     error: ['error', 'Phone error'], off: ['', me && !me.sip ? 'No phone line' : 'Phone off'] }[phone.state];
-  const line = $('#lineStatus');
-  line.className = 'pill ' + st[0]; line.textContent = st[1]; line.title = phone.error || '';
+  ['#lineStatus', '#lineStatusM'].forEach((sel) => {
+    const line = $(sel);
+    line.className = 'pill ' + st[0]; line.textContent = st[1]; line.title = phone.error || '';
+  });
+  const live = !!(phone.call && phone.session);
+  $('#fab').classList.toggle('live', live);
+  if (live || (phone.call && phone.call.status === 'ringing')) openDock();     // never miss a call
 }
 
 function renderPhone() {
@@ -324,11 +378,16 @@ window.addEventListener('hashchange', route);
 
 function route() {
   if (!session.me) return;
-  const [, view = 'contacts', id] = location.hash.split('/');
-  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
-  const el = $('#view');
+  let [, view = 'dashboard', id] = location.hash.split('/');
   const admin = session.me.user.role === 'admin';
+  if (!TITLES[view] || ((view === 'agents' || view === 'admin') && !admin)) view = 'dashboard';
+  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+  $('#mobileTitle').textContent = TITLES[view];
+  const el = $('#view');
   ctx.sub = id || '';
+  window.scrollTo(0, 0);
+  if (view === 'dashboard') return viewDashboard(el, ctx);
+  if (view === 'calls' && id) return viewCallPage(el, Number(id));
   if (view === 'calls') return viewCalls(el);
   if (view === 'campaigns' && id) return viewCampaign(el, Number(id), ctx);
   if (view === 'campaigns') return viewCampaigns(el, ctx);
@@ -342,12 +401,11 @@ function route() {
 const contactsState = { q: '', status: '', offset: 0 };
 
 async function viewContacts(el) {
-  el.innerHTML = `<div class="stats" id="stats"></div>
+  el.innerHTML = `${pageHead('Contacts', 'Everyone you call or who calls you.',
+      '<button class="btn" id="importBtn">Import CSV</button><button class="btn primary" id="newContact">+ Contact</button>')}
     <div class="toolbar">
-      <input id="cq" placeholder="Search name, phone, company, tag…" value="${esc(contactsState.q)}">
-      <select id="cstatus"><option value="">All statuses</option>${options(CONTACT_STATUSES.map((s) => [s, s[0].toUpperCase() + s.slice(1)]), contactsState.status)}</select>
-      <button class="btn primary" id="newContact">+ Contact</button>
-      <button class="btn" id="importBtn">Import CSV</button>
+      <input id="cq" type="search" placeholder="Search name, phone, company, tag…" value="${esc(contactsState.q)}">
+      <select id="cstatus" style="max-width:180px"><option value="">All statuses</option>${options(CONTACT_STATUSES.map((s) => [s, s[0].toUpperCase() + s.slice(1)]), contactsState.status)}</select>
     </div>
     <div class="card table-wrap" id="clist"><div class="empty">Loading…</div></div>`;
   let t;
@@ -356,20 +414,17 @@ async function viewContacts(el) {
   $('#newContact').onclick = () => editContact(null, load);
   $('#importBtn').onclick = () => importCsv(load);
 
-  api('/stats').then((s) => {
-    if ($('#stats')) $('#stats').innerHTML = [
-      [s.calls, 'Calls (24 h)'], [s.answered, 'Answered'], [s.outgoing, 'Outgoing'], [s.incoming, 'Incoming'],
-      [dur(s.seconds), 'Talk time'], [s.agentsOnline, 'Agents taking calls'],
-    ].map(([v, l]) => `<div class="card stat"><b>${esc(v)}</b><span>${l}</span></div>`).join('');
-  }).catch(() => {});
-
   async function load() {
     try {
       const qs = new URLSearchParams({ q: contactsState.q, status: contactsState.status, limit: 50, offset: contactsState.offset });
       const d = await api('/contacts?' + qs);
       const box = $('#clist');
       if (!box) return;
-      if (!d.items.length) { box.innerHTML = `<div class="empty">${contactsState.q ? 'No matches' : 'No contacts yet – add one or import a CSV'}</div>`; return; }
+      if (!d.items.length) {
+        box.innerHTML = contactsState.q ? '<div class="empty"><b>No matches</b>Try another name, number or tag.</div>'
+          : '<div class="empty"><b>No contacts yet</b>Add one, or import a CSV with a phone column.</div>';
+        return;
+      }
       box.innerHTML = `<table><thead><tr><th>Name</th><th>Phone</th><th>Company</th><th>Status</th><th>Score</th><th>Tags</th><th>Last call</th><th></th></tr></thead><tbody>
         ${d.items.map((c) => `<tr class="click" data-id="${c.id}">
           <td>${esc(c.name || '—')}${c.dnc ? ' <span class="tag bad">DNC</span>' : ''}</td><td>${esc(c.phone)}</td><td>${esc(c.company)}</td><td>${esc(c.status)}</td>
@@ -456,7 +511,7 @@ async function viewContact(el, id) {
   try { c = await api('/contacts/' + id); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   let custom = {};
   try { custom = JSON.parse(c.custom || '{}'); } catch { /* */ }
-  el.innerHTML = `<div class="toolbar"><a href="#/contacts" class="btn ghost">‹ Contacts</a></div>
+  el.innerHTML = `<div class="toolbar"><a href="#/contacts" class="btn ghost small">${icon('back')} Contacts</a></div>
     <div class="card panel">
       <div class="toolbar" style="margin:0">
         <div style="flex:1"><h2 style="margin:0">${esc(c.name || c.phone)} ${c.dnc ? '<span class="tag bad">Do not call</span>' : ''}</h2>
@@ -486,7 +541,7 @@ async function viewContact(el, id) {
 
 // --------------------------------------------------------------- calls ----
 function callsTable(items, showContact = true) {
-  if (!items.length) return '<div class="empty">No calls yet</div>';
+  if (!items.length) return '<div class="empty"><b>No calls yet</b>Calls you make or receive show up here.</div>';
   return `<table><thead><tr><th>When</th><th></th>${showContact ? '<th>Contact / number</th>' : '<th>Number</th>'}<th>By</th><th>Status</th><th>Talk</th><th>Outcome</th><th>Summary / notes</th></tr></thead><tbody>
     ${items.map((k) => `<tr class="click" data-call-id="${k.id}">
       <td class="muted">${when(k.started_at)}</td>
@@ -501,55 +556,84 @@ function callsTable(items, showContact = true) {
     </tbody></table>`;
 }
 
-function bindCallsTable(el, reload) {
+function bindCallsTable(el) {
   el.querySelectorAll('tr[data-call-id]').forEach((tr) => {
-    tr.onclick = (e) => { if (!e.target.closest('a')) callDetail(Number(tr.dataset.callId), reload); };
+    tr.onclick = (e) => { if (!e.target.closest('a')) location.hash = '#/calls/' + tr.dataset.callId; };
   });
 }
 
-async function callDetail(id, reload) {
+async function viewCallPage(el, id) {
+  el.innerHTML = '<div class="empty">Loading…</div>';
   let k;
-  try { k = await api('/calls/' + id); } catch (e) { fail(e); return; }
+  try { k = await api('/calls/' + id); } catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const fields = Object.entries(k.ai_fields || {});
-  modal(`<h2>${k.direction === 'in' ? 'Incoming' : 'Outgoing'} call · ${esc(k.contact_name || k.number)}</h2>
-    <dl class="kv"><dt>Number</dt><dd>${esc(k.number)}</dd><dt>When</dt><dd>${when(k.started_at)}</dd>
-      <dt>Status</dt><dd>${esc(STATUS_LABEL[k.status] || k.status)}${k.cause ? ` <span class="muted">(${esc(k.cause)})</span>` : ''}</dd>
-      <dt>Talk time</dt><dd>${dur(k.duration)}</dd>
-      <dt>By</dt><dd>${k.ai_agent_name ? 'AI agent ' + esc(k.ai_agent_name) : esc(k.agent_name || '—')} <span class="muted">via ${esc(k.provider)}</span></dd>
-      ${k.campaign_name ? `<dt>Campaign</dt><dd>${esc(k.campaign_name)}</dd>` : ''}
-      ${k.score != null ? `<dt>Lead score</dt><dd><span class="score">${k.score}</span> ${esc(k.sentiment)}</dd>` : ''}
-      ${k.next_step ? `<dt>Next step</dt><dd>${esc(k.next_step)}${k.callback_at ? ' – ' + when(k.callback_at) : ''}</dd>` : ''}
-      ${fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(typeof b === 'object' ? JSON.stringify(b) : b)}</dd>`).join('')}
-    </dl>
-    ${k.summary ? `<div class="note"><b>AI summary:</b> ${esc(k.summary)}</div>` : ''}
-    ${k.analysis === 'pending' ? '<p class="muted">AI analysis is running…</p>' : ''}
-    ${k.analysis.startsWith('error') ? `<p class="error">AI analysis failed: ${esc(k.analysis.slice(7))}</p>` : ''}
-    ${k.has_recording ? `<audio controls preload="none" src="/api/calls/${k.id}/recording" style="width:100%;margin-top:10px"></audio>` : ''}
-    ${k.transcript.length ? `<details class="transcript"><summary>Transcript (${k.transcript.length} lines)</summary>
-      ${k.transcript.map((t) => `<div class="cap ${esc(t.role)}"><b>${esc(t.role)}:</b> ${esc(t.text)}</div>`).join('')}</details>` : ''}
-    <label style="margin-top:12px">Outcome <select id="kout">${options(OUTCOMES, k.disposition)}</select></label>
-    <label>Notes <textarea id="knotes">${esc(k.notes)}</textarea></label>
-    <div class="modal-actions">
-      <button class="btn green" id="kcall" style="margin-right:auto">Call back</button>
-      ${k.transcript.length || k.has_recording ? '<button class="btn" id="kai">Re-run AI analysis</button>' : ''}
-      <button class="btn ghost" id="kclose">Close</button><button class="btn primary" id="ksave">Save</button></div>`, (m) => {
-    $('#kclose', m).onclick = closeModal;
-    $('#kcall', m).onclick = () => { closeModal(); placeCall(k.number, k.contact_id, k.contact_name || ''); };
-    if ($('#kai', m)) $('#kai', m).onclick = async () => { await api(`/calls/${k.id}/analyze`, { method: 'POST' }).catch(fail); toast('Analysis started'); closeModal(); };
-    $('#ksave', m).onclick = async () => {
-      try {
-        await api('/calls/' + k.id, { method: 'PATCH', body: { disposition: $('#kout', m).value, notes: $('#knotes', m).value } });
-        closeModal(); toast('Saved'); reload();
-      } catch (err) { fail(err); }
-    };
-  }, true);
+  const who = k.contact_name || k.number;
+  const by = k.ai_agent_name ? `<span class="tag ai">AI · ${esc(k.ai_agent_name)}</span>` : esc(k.agent_name || '—');
+  const roleName = (r) => ({ agent: k.ai_agent_name || k.agent_name || 'Agent', contact: k.contact_name || 'Contact', system: '' }[r] ?? r);
+  const sentimentTag = k.sentiment ? `<span class="tag ${k.sentiment === 'positive' ? 'ok' : k.sentiment === 'negative' ? 'bad' : ''}">${esc(k.sentiment)}</span>` : '';
+  el.innerHTML = `<div class="toolbar"><a href="#/calls" class="btn ghost small">${icon('back')} Calls</a></div>
+    <div class="card panel">
+      <div class="call-hero">
+        <div style="flex:1;min-width:220px">
+          <div class="who">${k.contact_id ? `<a href="#/contacts/${k.contact_id}">${esc(who)}</a>` : esc(who)}</div>
+          <div class="muted">${k.direction === 'in' ? 'Incoming' : 'Outgoing'} · ${esc(k.number)} · ${when(k.started_at)}</div>
+        </div>
+        ${k.score != null ? `<div class="score big" title="AI lead score">${k.score}</div>` : ''}
+        <button class="btn green" id="kcall">${icon('calls')} Call back</button>
+      </div>
+      <div class="stats" style="margin:16px 0 0">
+        <div class="card stat"><span>Status</span><b class="st-${esc(k.status)}" style="font-size:18px">${esc(STATUS_LABEL[k.status] || k.status)}</b>${k.cause ? `<small>${esc(k.cause)}</small>` : ''}</div>
+        <div class="card stat"><span>Talk time</span><b style="font-size:18px">${dur(k.duration)}</b></div>
+        <div class="card stat"><span>Handled by</span><b style="font-size:15px">${by}</b><small>via ${esc(k.provider)}</small></div>
+        ${k.campaign_name ? `<div class="card stat"><span>Campaign</span><b style="font-size:15px">${esc(k.campaign_name)}</b></div>` : ''}
+      </div>
+    </div>
+    <div class="detail-grid">
+      <div>
+        ${k.has_recording ? `<div class="card panel"><h2>Recording</h2><audio controls preload="none" src="/api/calls/${k.id}/recording"></audio></div>` : ''}
+        <div class="card panel"><h2>Transcript</h2>
+          ${k.transcript.length ? `<div class="chat">${k.transcript.map((t) => `<div class="bubble ${esc(t.role)}">
+              ${roleName(t.role) ? `<small>${esc(roleName(t.role))}</small>` : ''}${esc(t.text)}</div>`).join('')}</div>`
+            : '<div class="empty" style="padding:20px">No transcript for this call.</div>'}
+        </div>
+      </div>
+      <div>
+        <div class="card panel"><div class="card-head"><h2>AI insights</h2>
+            ${k.transcript.length || k.has_recording ? `<button class="btn small" id="kai">${icon('spark')} Re-analyse</button>` : ''}</div>
+          ${k.analysis === 'pending' ? '<p class="muted">Analysing…</p>' : ''}
+          ${(k.analysis || '').startsWith('error') ? `<div class="note warn">Analysis failed: ${esc(k.analysis.slice(7))}</div>` : ''}
+          ${k.summary ? `<div class="insight"><span>Summary</span>${esc(k.summary)}</div>` : ''}
+          ${k.sentiment || k.score != null ? `<div class="insight"><span>Sentiment &amp; score</span>${sentimentTag} ${k.score != null ? `<span class="score">${k.score}</span>` : ''}</div>` : ''}
+          ${k.next_step ? `<div class="insight"><span>Next step</span>${esc(k.next_step)}${k.callback_at ? `<br><b>Call back ${when(k.callback_at)}</b>` : ''}</div>` : ''}
+          ${fields.length ? `<div class="insight"><span>What we learned</span><dl class="kv" style="margin:0">${fields.map(([a, b]) =>
+            `<dt>${esc(a)}</dt><dd>${esc(typeof b === 'object' ? JSON.stringify(b) : b)}</dd>`).join('')}</dl></div>` : ''}
+          ${!k.summary && !fields.length && k.analysis !== 'pending' ? '<p class="muted">No AI insights yet – they appear after a call with a transcript or recording.</p>' : ''}
+        </div>
+        <div class="card panel"><h2>Outcome</h2>
+          <label>Result <select id="kout">${options(OUTCOMES, k.disposition)}</select></label>
+          <label>Notes <textarea id="knotes" placeholder="What was agreed?">${esc(k.notes)}</textarea></label>
+          <button class="btn primary" id="ksave">Save</button>
+        </div>
+      </div>
+    </div>`;
+  $('#kcall').onclick = () => placeCall(k.number, k.contact_id, k.contact_name || '');
+  if ($('#kai')) $('#kai').onclick = async () => {
+    await api(`/calls/${k.id}/analyze`, { method: 'POST' }).catch(fail);
+    toast('Analysis started'); setTimeout(() => viewCallPage(el, id), 4000);
+  };
+  $('#ksave').onclick = async () => {
+    try { await api('/calls/' + k.id, { method: 'PATCH', body: { disposition: $('#kout').value, notes: $('#knotes').value } }); toast('Saved'); }
+    catch (err) { fail(err); }
+  };
+  refreshView = () => {};
 }
 
 const callsState = { q: '', direction: '', status: '', mine: false, ai: false, offset: 0 };
 
 function viewCalls(el) {
-  el.innerHTML = `<div class="toolbar">
-      <input id="kq" placeholder="Search number, contact, notes…" value="${esc(callsState.q)}">
+  el.innerHTML = `${pageHead('Calls', 'Every call – human and AI – with recordings, transcripts and AI insights.')}
+    <div class="toolbar">
+      <input id="kq" type="search" placeholder="Search number, contact, notes…" value="${esc(callsState.q)}">
       <select id="kdir">${options([['', 'In & out'], ['in', 'Incoming'], ['out', 'Outgoing']], callsState.direction)}</select>
       <select id="kst">${options([['', 'Any status'], ...Object.entries(STATUS_LABEL).filter(([x]) => !['new', 'dialing', 'ringing'].includes(x))], callsState.status)}</select>
       <label class="switch"><input type="checkbox" id="kai" ${callsState.ai ? 'checked' : ''}> AI calls</label>

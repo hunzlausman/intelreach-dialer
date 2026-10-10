@@ -40,7 +40,13 @@ async def tts_file(text, voice_id, path, model_id="eleven_multilingual_v2"):
 async def voices():
     async with net.client() as c:
         r = net.check(await c.get(f"{API}/voices", headers=_headers()), "ElevenLabs")
-    return [{"id": v["voice_id"], "name": v["name"]} for v in r.json().get("voices", [])]
+    out = []
+    for v in r.json().get("voices", []):
+        lab = v.get("labels") or {}
+        out.append({"id": v["voice_id"], "name": v["name"], "preview": v.get("preview_url") or "",
+                    "info": " · ".join(x for x in (lab.get("gender"), lab.get("accent"), lab.get("age"),
+                                                    lab.get("use_case") or lab.get("description")) if x)})
+    return out
 
 
 async def agents():

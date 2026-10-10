@@ -777,3 +777,14 @@ def test_llm_answers_without_tools_when_refused(c, monkeypatch):
 
 async def _collect(gen):
     return [ev async for ev in gen]
+
+
+def test_dashboard_and_agent_check(c):
+    d = c.get("/api/dashboard", params={"days": 7, "tz": 300}).json()
+    assert d["days"] == 7 and len(d["daily"]) == 7 and d["kpis"]["calls"] >= 1
+    assert {"connect_rate", "avg_talk", "ai_calls", "human_calls"} <= set(d["kpis"]) and "prev" in d
+    assert sum(x["calls"] for x in d["daily"]) == d["kpis"]["calls"]
+    assert c.get("/api/dashboard", params={"days": 5}).json()["days"] == 7          # only 1 / 7 / 30 / 90
+    agent = next(a for a in c.get("/api/ai-agents").json()["items"] if a["kind"] == "custom")
+    chk = c.get(f"/api/ai-agents/{agent['id']}/check").json()
+    assert set(chk) == {"ready", "problems"}

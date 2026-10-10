@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>IntelReach CRM</title>
+  <meta name="color-scheme" content="light dark">
+  <title>IntelReach</title>
+  <script>
+    // theme before first paint (no flash): saved choice, else the system's
+    try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) { /* storage blocked */ }
+  </script>
   <link rel="stylesheet" href="/styles.css">
   <script src="/vendor/jssip.min.js"></script>
 </head>
@@ -11,7 +16,9 @@
   <!-- sign in -->
   <section id="login" class="login" hidden>
     <form id="loginForm" class="card login-card">
-      <div class="brand big"><span class="logo">IR</span> IntelReach CRM</div>
+      <div class="brand big"><span class="logo">IR</span> IntelReach</div>
+      <h1>Welcome back</h1>
+      <p class="muted">Sign in to your calling workspace.</p>
       <label>Email <input name="email" type="email" autocomplete="username" required></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
       <p class="error" id="loginError"></p>
@@ -21,32 +28,44 @@
 
   <!-- app -->
   <section id="app" class="shell" hidden>
-    <header class="topbar">
-      <div class="brand"><span class="logo">IR</span> <span id="companyName">IntelReach CRM</span></div>
-      <nav id="nav">
-        <a href="#/contacts" data-view="contacts">Contacts</a>
-        <a href="#/calls" data-view="calls">Calls</a>
-        <a href="#/campaigns" data-view="campaigns">Campaigns</a>
-        <a href="#/agents" data-view="agents" class="admin-only">AI agents</a>
-        <a href="#/admin" data-view="admin" class="admin-only">Admin</a>
-      </nav>
-      <div class="top-right">
-        <label class="switch" title="Ring me for calls to the Twilio number">
-          <input type="checkbox" id="availToggle"> <span>Taking calls</span>
-        </label>
-        <span id="lineStatus" class="pill">Phone off</span>
-        <span id="userName" class="muted"></span>
-        <button class="btn ghost small" id="logoutBtn">Sign out</button>
+    <aside class="sidebar" id="sidebar">
+      <div class="brand"><span class="logo">IR</span> <span id="companyName">IntelReach</span></div>
+      <nav id="nav"></nav>
+      <div class="sidebar-foot">
+        <div class="status-row">
+          <label class="toggle" title="Ring me for incoming calls">
+            <input type="checkbox" id="availToggle"><span class="track"></span> <span>Taking calls</span>
+          </label>
+        </div>
+        <div class="status-row"><span id="lineStatus" class="pill">Phone off</span>
+          <button class="btn ghost small" id="dockToggle" title="Show / hide the phone">Phone</button></div>
+        <div class="me">
+          <span class="avatar" id="avatar"></span>
+          <div style="min-width:0"><div class="me-name" id="userName"></div><div class="muted small" id="userRole"></div></div>
+          <div class="me-actions">
+            <button class="btn ghost icon-only" id="themeBtn" title="Light / dark"></button>
+            <button class="btn ghost icon-only" id="logoutBtn" title="Sign out"></button>
+          </div>
+        </div>
       </div>
-    </header>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
 
-    <main class="layout">
-      <div id="view" class="view"></div>
-      <aside class="side">
-        <div class="phone card" id="phonePanel"></div>
-        <div class="card assist" id="assistPanel" hidden></div>
-      </aside>
-    </main>
+    <div class="main">
+      <header class="mobilebar">
+        <button class="btn ghost icon-only" id="menuBtn" aria-label="Menu"></button>
+        <span class="title" id="mobileTitle">IntelReach</span>
+        <span id="lineStatusM" class="pill">Phone off</span>
+      </header>
+      <main id="view" class="page"></main>
+    </div>
+
+    <aside class="dock" id="dock">
+      <div class="dock-head"><b>Phone</b><button class="btn ghost small" id="dockClose">Hide</button></div>
+      <div class="phone" id="phonePanel"></div>
+      <div class="card assist" id="assistPanel" hidden></div>
+    </aside>
+    <button class="fab" id="fab" aria-label="Open the phone"></button>
   </section>
 
   <div id="modal" class="modal" hidden><div class="card modal-card" id="modalCard"></div></div>

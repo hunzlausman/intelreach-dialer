@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import admin, aiapi, api, campaigns, config, db, dialer, hooks, launcher, outcomes, trunks, webhooks
+from . import admin, aiapi, api, campaigns, config, dashboard, db, dialer, hooks, launcher, outcomes, trunks, webhooks
 from .voice import audiosocket, media
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -38,7 +38,8 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="IntelReach Calling CRM", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-for r in (api.router, admin.router, campaigns.router, aiapi.router, hooks.router, webhooks.router, media.router):
+for r in (api.router, admin.router, campaigns.router, aiapi.router, dashboard.router, hooks.router, webhooks.router,
+          media.router):
     app.include_router(r)
 
 

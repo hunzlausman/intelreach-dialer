@@ -91,6 +91,30 @@ def update_agent(aid: int, body: AgentIn, user=Depends(require_admin)):
     return {"ok": True}
 
 
+@router.get("/ai-agents/{aid}/check")
+def check_agent(aid: int, user=Depends(require_admin)):
+    """Is this agent ready to call? Lists what is missing (keys, trunk, voice, prompt)."""
+    problems = []
+    with db.tx() as con:
+        try:
+            agent = launcher.load_agent(con, aid)
+        except net.ProviderError as e:
+            raise HTTPException(404, str(e))
+        p = launcher.route_problem(con, agent)
+        if p:
+            problems.append(p)
+    cfg = agent["cfg"]
+    if agent["kind"] == "custom":
+        prov, _ = llm.resolve(cfg.get("llm_provider", "anthropic"), cfg.get("llm_model", ""))
+        if not llm._ready(prov):
+            problems.append("No LLM key – add Google Gemini, AssemblyAI, Anthropic or OpenAI in Admin → Integrations")
+        if not cfg.get("voice_id") and cfg.get("tts_provider", "elevenlabs") == "elevenlabs":
+            problems.append("Choose a voice")
+        if not (cfg.get("prompt") or "").strip():
+            problems.append("Write the agent's instructions")
+    return {"ready": not problems, "problems": problems}
+
+
 @router.delete("/ai-agents/{aid}")
 def delete_agent(aid: int, user=Depends(require_admin)):
     with db.tx() as con:
